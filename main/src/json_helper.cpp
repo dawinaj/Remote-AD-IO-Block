@@ -11,18 +11,18 @@ using namespace rapidjson;
 
 Document &create_empty_response(Document &doc)
 {
-	doc.SetObject();
 	Document::AllocatorType &alctr = doc.GetAllocator();
-	doc.AddMember("status", "unknown", alctr);
-	doc.AddMember("message", "Empty message", alctr);
+	doc.SetObject();
+	doc.AddMember("status", "", alctr);
+	doc.AddMember("message", "", alctr);
 	doc.AddMember("data", Value(kObjectType), alctr);
 	return doc;
 }
 
 Document &create_ok_response(Document &doc)
 {
-	doc.SetObject();
 	Document::AllocatorType &alctr = doc.GetAllocator();
+	create_empty_response(doc);
 	doc.AddMember("status", "ok", alctr);
 	doc.AddMember("message", "Ok", alctr);
 	doc.AddMember("data", Value(kObjectType), alctr);
@@ -38,7 +38,7 @@ Document &create_err_response(Document &doc)
 
 	doc.AddMember("data", Value(kObjectType), alctr);
 
-	doc["data"].AddMember("errmsg", "Misc error", alctr);
+	doc["data"].AddMember("errmsg", "", alctr);
 	doc["data"].AddMember("errcode", 0, alctr);
 	return doc;
 }
