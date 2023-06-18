@@ -1,62 +1,50 @@
-
 #include "json_helper.h"
 
-#include "rapidjson/document.h"
-// #include "rapidjson/writer.h"
-// #include "rapidjson/error/en.h"
+static const char *TAG = "JsonHelp";
 
-using namespace rapidjson;
-
-// static const char *TAG = "JsonHelp";
-
-Document &create_empty_response(Document &doc)
+json create_empty_response()
 {
-	Document::AllocatorType &alctr = doc.GetAllocator();
-	doc.SetObject();
-	doc.AddMember("status", "", alctr);
-	doc.AddMember("message", "", alctr);
-	doc.AddMember("data", Value(kObjectType), alctr);
+	json doc = json::object();
+	doc["status"] = "";
+	doc["message"] = "";
+	doc["data"] = json::object();
 	return doc;
 }
 
-Document &create_ok_response(Document &doc)
+json create_ok_response()
 {
-	Document::AllocatorType &alctr = doc.GetAllocator();
-	create_empty_response(doc);
-	doc.AddMember("status", "ok", alctr);
-	doc.AddMember("message", "Ok", alctr);
-	doc.AddMember("data", Value(kObjectType), alctr);
+	json doc = create_empty_response();
+	doc["status"] = "ok";
+	doc["message"] = "Ok";
 	return doc;
 }
 
-Document &create_err_response(Document &doc)
+json create_err_response(int code, const std::string &msg)
 {
-	doc.SetObject();
-	Document::AllocatorType &alctr = doc.GetAllocator();
-	doc.AddMember("status", "error", alctr);
-	doc.AddMember("message", "Error occured: ${data.errmsg} Code: ${data.errcode}", alctr);
-
-	doc.AddMember("data", Value(kObjectType), alctr);
-
-	doc["data"].AddMember("errmsg", "", alctr);
-	doc["data"].AddMember("errcode", 0, alctr);
+	json doc = create_empty_response();
+	doc["status"] = "error";
+	doc["message"] = "Error occured: ${data.errmsg} Code: ${data.errcode}";
+	doc["data"]["errmsg"] = msg;
+	doc["data"]["errcode"] = code;
 	return doc;
 }
 
-Document &create_welcome_response(Document &doc)
+//
+
+const char CMPLDATE[] = __DATE__;
+const char CMPLTIME[] = __TIME__;
+const char CMPLVRSN[] = __VERSION__;
+
+json create_welcome_response()
 {
-	doc.SetObject();
-	Document::AllocatorType &alctr = doc.GetAllocator();
-	doc.AddMember("status", "ok", alctr);
-	doc.AddMember("message", "Welcome!\n"
-							 "Last compilation time: ${data.cmpldate} ${data.cmpltime}.\n"
-							 "Compiler version: ${data.cmplver}.",
-				  alctr);
+	json doc = create_ok_response();
 
-	doc.AddMember("data", Value(kObjectType), alctr);
+	doc["message"] = "Welcome!\n"
+					 "Last compilation time: ${data.cmpldate} ${data.cmpltime}.\n"
+					 "Compiler version: ${data.cmplver}.";
 
-	doc["data"].AddMember("cmpldate", CMPLDATE, alctr);
-	doc["data"].AddMember("cmpltime", CMPLTIME, alctr);
-	doc["data"].AddMember("cmplvrsn", CMPLVRSN, alctr);
+	doc["data"]["cmpldate"] = CMPLDATE;
+	doc["data"]["cmpltime"] = CMPLTIME;
+	doc["data"]["cmplvrsn"] = CMPLVRSN;
 	return doc;
 }

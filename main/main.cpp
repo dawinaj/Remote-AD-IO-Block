@@ -14,34 +14,10 @@
 #include <lwip/sockets.h>
 
 #include "ethernet.h"
-#include "connection_hdlr.h"
-#include "exchange_hdlr.h"
 
 #include "webserver.h"
 
-static const char *TAG = "[" __TIME__
-						 "]E🅱 ernet";
-
-//
-
-// #if (!defined(HAS_IPV4) || !HAS_IPV4) && (!defined(HAS_IPV6) || !HAS_IPV6)
-// #error Cannot compile program without any IP family enabled!
-// #endif
-
-// StaticTask_t xchg_task_buf;
-// StackType_t xchg_task_stck[XCHG_MEM];
-
-// #if HAS_IPV4
-// StaticTask_t connv4_task_buf;
-// StackType_t connv4_task_stck[CONN_MEM];
-// #endif
-
-// #ifdef HAS_IPV6
-// StaticTask_t connv6_task_buf;
-// StackType_t connv6_task_stck[CONN_MEM];
-// #endif
-
-//
+static const char *TAG = "[" __TIME__ "]E🅱 ernet";
 
 extern "C" void app_main(void)
 {
@@ -73,41 +49,6 @@ extern "C" void app_main(void)
 	// ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ETHERNET_EVENT_DISCONNECTED, &disconnect_handler, &server));
 
 	server = start_webserver();
-
-	//	TaskHandle_t connv4_task_hdl;
-	//	TaskHandle_t connv6_task_hdl;
-	//	TaskHandle_t xchg_task_hdl;
-
-	// #if HAS_IPV4
-	// 	TaskHandle_t connv4_task_hdl = xTaskCreateStaticPinnedToCore(connection_hdlr_task<AF_INET>,
-	// 																 "connv4_task",
-	// 																 CONN_MEM,
-	// 																 (void *)&conn_queue,
-	// 																 CONN_PRT,
-	// 																 &connv4_task_stck[0],
-	// 																 &connv4_task_buf,
-	// 																 CPU0);
-	// #endif
-
-	// #ifdef HAS_IPV6
-	// 	TaskHandle_t connv6_task_hdl = xTaskCreateStaticPinnedToCore(connection_hdlr_task<AF_INET6>,
-	// 																 "connv6_task",
-	// 																 CONN_MEM,
-	// 																 (void *)&conn_queue,
-	// 																 CONN_PRT,
-	// 																 &connv6_task_stck[0],
-	// 																 &connv6_task_buf,
-	// 																 CPU0);
-	// #endif
-
-	// 	TaskHandle_t xchg_task_hdl = xTaskCreateStaticPinnedToCore(exchange_hdlr_task,
-	// 															   "xchg_task",
-	// 															   XCHG_MEM,
-	// 															   (void *)&conn_queue,
-	// 															   XCHG_PRT,
-	// 															   &xchg_task_stck[0],
-	// 															   &xchg_task_buf,
-	// 															   CPU1);
 
 	while (true)
 	{

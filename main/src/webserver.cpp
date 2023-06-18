@@ -102,16 +102,9 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 	httpd_resp_set_status(req, HTTPD_200);
 	httpd_resp_set_type(req, "application/json");
 
-	rj::Document doc;
-	create_welcome_response(doc);
-
-	rj::StringBuffer strbuf;
-	//	strbuf.Clear();
-
-	rj::Writer<rj::StringBuffer> writer(strbuf);
-	doc.Accept(writer);
-
-	httpd_resp_send(req, strbuf.GetString(), HTTPD_RESP_USE_STRLEN);
+	json doc = create_welcome_response();
+	std::string out = doc.dump();
+	httpd_resp_send(req, out.c_str(), out.length());
 
 	return ESP_OK;
 }
@@ -121,9 +114,9 @@ static esp_err_t get_handler(httpd_req_t *req)
 	httpd_resp_set_status(req, HTTPD_200);
 	httpd_resp_set_type(req, "application/json");
 
-	static const char *message = R"rawlit({"status":"ok","data":{}})rawlit";
-
-	httpd_resp_send(req, message, HTTPD_RESP_USE_STRLEN);
+	json doc = create_ok_response();
+	std::string out = doc.dump();
+	httpd_resp_send(req, out.c_str(), out.length());
 
 	return ESP_OK;
 }
@@ -158,20 +151,14 @@ static esp_err_t gpio_handler(httpd_req_t *req)
 	httpd_resp_set_status(req, HTTPD_200);
 	httpd_resp_set_type(req, "application/json");
 
-	rj::Document doc;
-	rj::Document::AllocatorType &alctr = doc.GetAllocator();
-
-	create_ok_response(doc);
-	doc["data"].AddMember("gpio_diode", lvl, alctr);
-	doc["data"].AddMember("gpio_button", gpio_get_level(GPIO_NUM_19), alctr);
+	json doc = create_ok_response();
+	doc["data"]["gpio_diode"] = lvl;
+	doc["data"]["gpio_button"] = gpio_get_level(GPIO_NUM_19);
 
 	doc["message"] = "Diode is: ${data.gpio_diode}\nButton is: ${data.gpio_button}";
 
-	rj::StringBuffer strbuf;
-	rj::Writer<rj::StringBuffer> writer(strbuf);
-	doc.Accept(writer);
-
-	httpd_resp_send(req, strbuf.GetString(), HTTPD_RESP_USE_STRLEN);
+	std::string out = doc.dump();
+	httpd_resp_send(req, out.c_str(), out.length());
 
 	return ESP_OK;
 }

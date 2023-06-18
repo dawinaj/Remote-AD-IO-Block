@@ -1,16 +1,13 @@
 #pragma once
 
-#include "rapidjson/document.h"
+#include "nlohmann/json.hpp"
+using namespace nlohmann;
 
 //
 
-rapidjson::Document &create_empty_response(rapidjson::Document &);
+json create_empty_response();
 
-rapidjson::Document &create_ok_response(rapidjson::Document &);
-rapidjson::Document &create_err_response(rapidjson::Document &);
+json create_ok_response();
+json create_err_response(int = 0, const std::string & = "");
 
-rapidjson::Document &create_welcome_response(rapidjson::Document &);
-
-const char CMPLDATE[] = __DATE__;
-const char CMPLTIME[] = __TIME__;
-const char CMPLVRSN[] = __VERSION__;
+json create_welcome_response();
