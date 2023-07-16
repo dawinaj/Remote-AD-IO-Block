@@ -13,10 +13,6 @@
 
 #include "json_helper.h"
 
-#include "rapidjson/stringbuffer.h"
-#include "rapidjson/writer.h"
-namespace rj = rapidjson;
-
 //
 
 #include <driver/gpio.h>
@@ -109,14 +105,29 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 	return ESP_OK;
 }
 
+static char randommem[1000];
+
 static esp_err_t get_handler(httpd_req_t *req)
 {
 	httpd_resp_set_status(req, HTTPD_200);
-	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_type(req, "multipart/mixed; boundary=" BOUNDARY);
 
 	json doc = create_ok_response();
 	std::string out = doc.dump();
-	httpd_resp_send(req, out.c_str(), out.length());
+
+	httpd_resp_sendstr_chunk(req, "--" BOUNDARY "\r\n");
+	httpd_resp_sendstr_chunk(req, "Content-Type: application/json\r\n\r\n");
+	httpd_resp_send_chunk(req, out.c_str(), out.length());
+
+	for (int i = 100; i > 0; --i)
+	{
+		httpd_resp_sendstr_chunk(req, "\r\n--" BOUNDARY "\r\n");
+		httpd_resp_sendstr_chunk(req, "Content-Type: application/octet-stream\r\n\r\n");
+		httpd_resp_send_chunk(req, randommem, 1000);
+	}
+
+	httpd_resp_sendstr_chunk(req, "\r\n--" BOUNDARY "--\r\n");
+	httpd_resp_sendstr_chunk(req, nullptr);
 
 	return ESP_OK;
 }
@@ -191,40 +202,21 @@ static const httpd_uri_t gpio_uri = {
 	.user_ctx = nullptr,
 };
 
+//
+
 httpd_handle_t start_webserver()
 {
-	httpd_handle_t server = NULL;
+	httpd_handle_t server = nullptr;
 
-	httpd_config_t config = {
-		.task_priority = HTTP_PRT,
-		.stack_size = HTTP_MEM,
-		.core_id = CPU1,
-		.server_port = 80,
-		.ctrl_port = 32768,
-		.max_open_sockets = 7,
-		.max_uri_handlers = 8,
-		.max_resp_headers = 8,
-		.backlog_conn = 5,
-		.lru_purge_enable = false,
-		.recv_wait_timeout = 5,
-		.send_wait_timeout = 5,
-		.global_user_ctx = NULL,
-		.global_user_ctx_free_fn = NULL,
-		.global_transport_ctx = NULL,
-		.global_transport_ctx_free_fn = NULL,
-		.enable_so_linger = false,
-		.linger_timeout = 0,
-		.keep_alive_enable = false,
-		.keep_alive_idle = 0,
-		.keep_alive_interval = 0,
-		.keep_alive_count = 0,
-		.open_fn = NULL,
-		.close_fn = NULL,
-		.uri_match_fn = NULL,
-	};
+	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+
+	config.task_priority = HTTP_PRT;
+	config.stack_size = HTTP_MEM;
+	config.core_id = CPU0;
+	config.max_open_sockets = 1;
 
 	// Start the httpd server
-	ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
+	ESP_LOGI(TAG, "Starting server on port: %d", config.server_port);
 
 	if (httpd_start(&server, &config) == ESP_OK)
 	{
@@ -241,7 +233,7 @@ httpd_handle_t start_webserver()
 	return NULL;
 }
 
-static esp_err_t stop_webserver(httpd_handle_t server)
+esp_err_t stop_webserver(httpd_handle_t server)
 {
 	// Stop the httpd server
 	return httpd_stop(server);

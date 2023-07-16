@@ -1,5 +1,5 @@
 
-idf_component_register(	SRCS "main.cpp" "src/ethernet.cpp" "src/webserver.cpp" "src/json_helper.cpp"
+idf_component_register(	SRCS "main.cpp" "src/ethernet.cpp" "src/webserver.cpp" "src/json_helper.cpp" "src/adc_task.cpp"
 						INCLUDE_DIRS "." "include/"# "../components/eth_enc28j60"
 						REQUIRES driver lwip esp_hw_support esp_event esp_netif esp_eth esp_phy nvs_flash esp_http_server)
 
