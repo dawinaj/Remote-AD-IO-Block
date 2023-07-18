@@ -80,12 +80,15 @@ esp_err_t ethernet_init()
 
 	// PHY config
 	eth_phy_config_t phy_cfg = ETH_PHY_DEFAULT_CONFIG();
+	phy_cfg.autonego_timeout_ms = 10000;
 	phy_cfg.reset_gpio_num = GPIO_NUM_NC;
 
 	// EMAC config
 	eth_esp32_emac_config_t emac_cfg = ETH_ESP32_EMAC_DEFAULT_CONFIG();
 	emac_cfg.smi_mdc_gpio_num = GPIO_NUM_23;
 	emac_cfg.smi_mdio_gpio_num = GPIO_NUM_18;
+	emac_cfg.clock_config.rmii.clock_mode = EMAC_CLK_OUT;
+	emac_cfg.clock_config.rmii.clock_gpio = EMAC_CLK_OUT_180_GPIO;
 
 	// ========
 

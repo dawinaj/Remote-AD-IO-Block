@@ -210,10 +210,10 @@ httpd_handle_t start_webserver()
 
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 
-	config.task_priority = HTTP_PRT;
+	// config.task_priority = HTTP_PRT;
 	config.stack_size = HTTP_MEM;
 	config.core_id = CPU0;
-	config.max_open_sockets = 1;
+	// config.max_open_sockets = 1;
 
 	// Start the httpd server
 	ESP_LOGI(TAG, "Starting server on port: %d", config.server_port);

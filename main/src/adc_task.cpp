@@ -7,7 +7,7 @@ static TaskHandle_t adc_task_handle = nullptr;
 void start_adc_task()
 {
 	if (!adc_task_handle)
-		xTaskCreatePinnedToCore(adc_task, "adc_task", 4096, nullptr, ADC_PRT, &adc_task_handle, CPU1);
+		xTaskCreatePinnedToCore(adc_task, "adc_task", 4096, nullptr, ADC_PRT, &adc_task_handle, CPU0);
 }
 void stop_adc_task()
 {
