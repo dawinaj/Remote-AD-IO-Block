@@ -4,10 +4,10 @@
 #include <esp_event.h>
 #include <esp_log.h>
 #include <esp_system.h>
-#include <nvs_flash.h>
-#include <sys/param.h>
-#include <esp_netif.h>
-#include <esp_eth.h>
+// #include <nvs_flash.h>
+// #include <sys/param.h>
+// #include <esp_netif.h>
+// #include <esp_eth.h>
 
 #include <esp_http_server.h>
 
@@ -105,7 +105,7 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 	return ESP_OK;
 }
 
-static char randommem[1000];
+static char randommem[100000];
 
 static esp_err_t get_handler(httpd_req_t *req)
 {
@@ -119,7 +119,7 @@ static esp_err_t get_handler(httpd_req_t *req)
 	httpd_resp_sendstr_chunk(req, "Content-Type: application/json\r\n\r\n");
 	httpd_resp_send_chunk(req, out.c_str(), out.length());
 
-	for (int i = 100; i > 0; --i)
+	for (int i = 1000; i > 0; --i)
 	{
 		httpd_resp_sendstr_chunk(req, "\r\n--" BOUNDARY "\r\n");
 		httpd_resp_sendstr_chunk(req, "Content-Type: application/octet-stream\r\n\r\n");
