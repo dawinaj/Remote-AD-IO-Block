@@ -1,6 +1,6 @@
 #include "adc_task.h"
 
-#include "MCP3x0x.h"
+#include "MCP3XXX.h"
 
 //
 
@@ -21,20 +21,18 @@ void stop_adc_task()
 
 void adc_task(void *arg)
 {
-	MCP3204 adc(SPI3_HOST, GPIO_NUM_5, 2'000'000);
-
-	// adc.acquire_spi();
+	adc_ptr->acquire_spi();
 
 	while (1)
 	{
 
 		// int16_t voltage = adc.get_signed_raw(0, MCP_READ_SINGLE, 1);
 		// ESP_LOGI("MCP3XXX", "Voltage: %hd V", voltage);
-		float voltage = adc.get_float_volt(1, MCP_READ_SINGLE, 10);
-		ESP_LOGI("MCP3XXX", "Voltage: %f V", voltage);
+		float voltage = adc_ptr->get_float_volt(1, MCP_ADC_READ_SINGLE, 1000);
+		ESP_LOGI("MCP3xxx", "Voltage: %f V", voltage);
 
 		// vTaskDelay(pdMS_TO_TICKS(100));
 	}
 
-	adc.release_spi();
+	adc_ptr->release_spi();
 }

@@ -5,10 +5,9 @@
 #define NDEBUG 1
 
 #define HTTP_MEM (32 * 1024)
-#define SPI_MEM (16 * 1024) // 4096 default
+// #define SPI_MEM (16 * 1024) // 4096 default
 
 #define HTTP_PRT (configMAX_PRIORITIES * 3 / 4)
-#define ETHR_PRT (configMAX_PRIORITIES - 1)
 #define ADC_PRT (configMAX_PRIORITIES - 1)
 
 //
@@ -31,3 +30,9 @@
 // TYPEDEFS
 
 #define LOG_MEMORY_MAX ESP_LOGD(TAG, "Max memory: %i", uxTaskGetStackHighWaterMark(NULL))
+
+#include "MCP3XXX.h"
+#include "MCP4XXX.h"
+
+extern MCP3204 *adc_ptr;
+extern MCP4922 *dac_ptr;
