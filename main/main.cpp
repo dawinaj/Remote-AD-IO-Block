@@ -1,7 +1,5 @@
 #include "settings.h"
 
-// #include <cstdio>
-// #include <string>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -9,16 +7,12 @@
 #include <driver/spi_master.h>
 
 #include <nvs_flash.h>
-// #include <esp_netif.h>
-// #include <esp_event.h>
-// #include <esp_eth.h>
 
-// #include "ethernet.h"
+#include "i2c_manager.h"
+
 #include "wifi.h"
 #include "webserver.h"
 #include "adc_task.h"
-
-#include "MCP4XXX.h"
 
 //
 
@@ -63,8 +57,7 @@ void init_spi()
 	spi_bus_initialize(SPI3_HOST, &bus3_cfg, SPI_DMA_DISABLED);
 }
 
-MCP3204 *adc_ptr;
-MCP4922 *dac_ptr;
+//
 
 extern "C" void app_main(void)
 {
@@ -92,25 +85,25 @@ extern "C" void app_main(void)
 	// gpio_set_direction(GPIO_NUM_18, GPIO_MODE_OUTPUT);
 	// gpio_set_direction(GPIO_NUM_19, GPIO_MODE_INPUT);
 
+	i2c_manager_init(I2C_NUM_0);
 	init_spi();
 
-	MCP3204 adc(SPI3_HOST, GPIO_NUM_5, 2'000'000);
-	MCP4922 dac(SPI2_HOST, GPIO_NUM_15, 10'000'000);
-	adc_ptr = &adc;
-	dac_ptr = &dac;
+	// // while (1)
+	// // {
+	// vTaskDelay(pdMS_TO_TICKS(5000));
 
-	// while (1)
-	// {
-	dac.set_float_volt(0, 4.0f);
-	dac.set_float_volt(1, 2.137f);
-	vTaskDelay(pdMS_TO_TICKS(1000));
-	// }
+	// dac.set_float_volt(0, 4.0f);
+	// dac.set_float_volt(1, 2.137f);
+	// vTaskDelay(pdMS_TO_TICKS(1000));
+	// // }
 
-	start_adc_task();
-	vTaskDelay(pdMS_TO_TICKS(4000));
-	stop_adc_task();
+	// vTaskDelay(pdMS_TO_TICKS(5000));
 
-	vTaskSuspend(NULL);
+	// vTaskSuspend(NULL);
+
+	// start_adc_task();
+	// vTaskDelay(pdMS_TO_TICKS(4000));
+	// stop_adc_task();
 
 	httpd_handle_t server = start_webserver();
 

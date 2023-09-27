@@ -34,11 +34,11 @@ enum mcp_adc_signed_t : bool
 	MCP_ADC_DATA_SIGNED = 1
 };
 
-#define TAG "MCP3xxx"
-
 template <mcp_adc_channels_t C, mcp_adc_bits_t B, mcp_adc_signed_t S = MCP_ADC_DATA_UNSIGNED>
 class MCP3xxx
 {
+	static constexpr char *TAG = "MCP3xxx";
+
 	using uout_t = uint16_t;
 	using sout_t = int16_t;
 
@@ -81,9 +81,6 @@ public:
 		ESP_GOTO_ON_ERROR(
 			spi_bus_add_device(spihost, &dev_cfg, &spi_hdl),
 			err, TAG, "Failed to add device to SPI bus!");
-
-		// int khz;
-		// spi_device_get_actual_freq(spi_hdl, &khz);
 
 		// ESP_LOGW(TAG, "kHz: %i", khz);
 		return;
@@ -255,8 +252,6 @@ private:
 		return trx;
 	}
 };
-
-#undef TAG
 
 // http://ww1.microchip.com/downloads/en/DeviceDoc/21294E.pdf
 using MCP3002 = MCP3xxx<MCP_ADC_CHANNELS_2, MCP_ADC_BITS_10>;
