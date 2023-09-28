@@ -31,8 +31,10 @@
 
 #define LOG_MEMORY_MAX ESP_LOGD(TAG, "Max memory: %i", uxTaskGetStackHighWaterMark(NULL))
 
-#include "MCP3XXX.h"
+#include "Board.h"
 #include "MCP4XXX.h"
 
 extern MCP3204 *adc_ptr;
 extern MCP4922 *dac_ptr;
+
+extern Board *board;

@@ -6,6 +6,7 @@
 
 #include <esp_log.h>
 #include <esp_check.h>
+
 #include <driver/spi_master.h>
 #include <driver/gpio.h>
 
@@ -22,11 +23,11 @@ enum mcp_dac_bits_t : uint8_t
 	MCP_DAC_BITS_12 = 12,
 };
 
-#define TAG "MCP4xxx"
-
 template <mcp_dac_channels_t C, mcp_dac_bits_t B>
 class MCP4xxx
 {
+	static constexpr const char *const TAG = "MCP4xxx";
+
 public:
 	using in_t = std::conditional_t<(B <= 8), uint8_t, uint16_t>;
 
@@ -129,7 +130,7 @@ public:
 			spi_device_polling_start(spi_hdl, &trx, portMAX_DELAY),
 			err, TAG, "Error in spi_device_polling_start()");
 
-		return ret;
+		return ESP_OK;
 	err:
 		ESP_LOGE(TAG, "Error in send_trx(): %s", esp_err_to_name(ret));
 		return ret;
@@ -143,7 +144,7 @@ public:
 			spi_device_polling_end(spi_hdl, portMAX_DELAY),
 			err, TAG, "Error in spi_device_polling_end()");
 
-		return ret;
+		return ESP_OK;
 	err:
 		ESP_LOGE(TAG, "Error in recv_trx(): %s", esp_err_to_name(ret));
 		return ret;
@@ -180,8 +181,6 @@ public:
 		return trx;
 	}
 };
-
-#undef TAG
 
 // https://ww1.microchip.com/downloads/en/DeviceDoc/22244B.pdf
 

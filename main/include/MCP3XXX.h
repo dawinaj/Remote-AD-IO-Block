@@ -5,6 +5,7 @@
 
 #include <esp_log.h>
 #include <esp_check.h>
+
 #include <driver/spi_master.h>
 #include <driver/gpio.h>
 
@@ -37,7 +38,7 @@ enum mcp_adc_signed_t : bool
 template <mcp_adc_channels_t C, mcp_adc_bits_t B, mcp_adc_signed_t S = MCP_ADC_DATA_UNSIGNED>
 class MCP3xxx
 {
-	static constexpr char *TAG = "MCP3xxx";
+	static constexpr const char *const TAG = "MCP3xxx";
 
 	using uout_t = uint16_t;
 	using sout_t = int16_t;
@@ -82,11 +83,11 @@ public:
 			spi_bus_add_device(spihost, &dev_cfg, &spi_hdl),
 			err, TAG, "Failed to add device to SPI bus!");
 
-		// ESP_LOGW(TAG, "kHz: %i", khz);
+		ESP_LOGI(TAG, "Constructed with host: %d, pin: %d", spihost, csgpio);
 		return;
 
 	err:
-		ESP_LOGE(TAG, "Failed to construct MCP! Error: %s", esp_err_to_name(ret));
+		ESP_LOGE(TAG, "Failed to construct! Error: %s", esp_err_to_name(ret));
 	}
 	~MCP3xxx()
 	{
@@ -192,7 +193,7 @@ private:
 			spi_device_polling_start(spi_hdl, &trx, portMAX_DELAY),
 			err, TAG, "Error in spi_device_polling_start()");
 
-		return ret;
+		return ESP_OK;
 	err:
 		ESP_LOGE(TAG, "Error in send_trx(): %s", esp_err_to_name(ret));
 		return ret;
@@ -206,7 +207,7 @@ private:
 			spi_device_polling_end(spi_hdl, portMAX_DELAY),
 			err, TAG, "Error in spi_device_polling_end()");
 
-		return ret;
+		return ESP_OK;
 	err:
 		ESP_LOGE(TAG, "Error in recv_trx(): %s", esp_err_to_name(ret));
 		return ret;

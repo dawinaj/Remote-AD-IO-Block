@@ -58,6 +58,7 @@ void init_spi()
 }
 
 //
+Board *board = nullptr;
 
 extern "C" void app_main(void)
 {
@@ -87,6 +88,8 @@ extern "C" void app_main(void)
 
 	i2c_manager_init(I2C_NUM_0);
 	init_spi();
+
+	board = new Board();
 
 	// // while (1)
 	// // {
