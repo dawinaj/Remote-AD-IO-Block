@@ -91,6 +91,11 @@ extern "C" void app_main(void)
 
 	board = new Board();
 
+	vTaskDelay(pdMS_TO_TICKS(5000));
+	ESP_LOGI(TAG, "Starting testing the relays");
+
+	board->test_relays();
+
 	// // while (1)
 	// // {
 	// vTaskDelay(pdMS_TO_TICKS(5000));
@@ -102,7 +107,7 @@ extern "C" void app_main(void)
 
 	// vTaskDelay(pdMS_TO_TICKS(5000));
 
-	// vTaskSuspend(NULL);
+	vTaskSuspend(NULL);
 
 	// start_adc_task();
 	// vTaskDelay(pdMS_TO_TICKS(4000));

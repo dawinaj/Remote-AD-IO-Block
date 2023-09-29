@@ -8,6 +8,15 @@
 #include "MCP3XXX.h"
 #include "MCP4XXX.h"
 
+enum class Input : uint8_t
+{
+	Inv = 0,
+	In1 = 1,
+	In2 = 2,
+	In3 = 3,
+	In4 = 4,
+};
+
 enum class In_Range : uint8_t
 {
 	OFF = 0,
@@ -50,7 +59,7 @@ public:
 
 	esp_err_t set_input_ranges(In_Range r1, In_Range r2, In_Range r3, In_Range ri)
 	{
-		static constexpr uint8_t bits[] = {0b0000, 0b0001, 0b0010, 0b0100};
+		static constexpr uint8_t steering[] = {0b0000, 0b0001, 0b0010, 0b0100};
 
 		esp_err_t ret = ESP_OK;
 
@@ -63,25 +72,25 @@ public:
 		if (ri != In_Range::Keep)
 			range_ini = ri;
 
-		uint8_t lower = bits[static_cast<uint8_t>(range_in1)] | bits[static_cast<uint8_t>(range_in2)] << 4;
-		uint8_t upper = bits[static_cast<uint8_t>(range_in3)] | bits[static_cast<uint8_t>(range_ini)] << 4;
+		uint8_t lower = steering[static_cast<uint8_t>(range_in1)] | steering[static_cast<uint8_t>(range_in2)] << 4;
+		uint8_t upper = steering[static_cast<uint8_t>(range_in3)] | steering[static_cast<uint8_t>(range_ini)] << 4;
 
 		ESP_GOTO_ON_ERROR(
 			expander_a.set_pins(0x00),
-			err, TAG, "Failed to reset relays!");
+			err, TAG, "Failed to reset relay a!");
 
 		ESP_GOTO_ON_ERROR(
 			expander_b.set_pins(0x00),
-			err, TAG, "Failed to reset relays!");
+			err, TAG, "Failed to reset relay b!");
 
 		vTaskDelay(pdMS_TO_TICKS(5));
 
 		ESP_GOTO_ON_ERROR(
 			expander_a.set_pins(lower),
-			err, TAG, "Failed to set relays!");
+			err, TAG, "Failed to set relay a!");
 		ESP_GOTO_ON_ERROR(
 			expander_b.set_pins(upper),
-			err, TAG, "Failed to set relays!");
+			err, TAG, "Failed to set relay b!");
 
 		return ESP_OK;
 
@@ -90,18 +99,20 @@ public:
 		return ret;
 	}
 
-	esp_err_t set_input_range(uint8_t input, In_Range range)
+	esp_err_t set_input_range(Input in, In_Range range)
 	{
-		switch (input)
+		switch (in)
 		{
-		case 1:
+		case Input::In1:
 			return set_input_ranges(range, In_Range::Keep, In_Range::Keep, In_Range::Keep);
-		case 2:
+		case Input::In2:
 			return set_input_ranges(In_Range::Keep, range, In_Range::Keep, In_Range::Keep);
-		case 3:
+		case Input::In3:
 			return set_input_ranges(In_Range::Keep, In_Range::Keep, range, In_Range::Keep);
-		case 4:
+		case Input::In4:
 			return set_input_ranges(In_Range::Keep, In_Range::Keep, In_Range::Keep, range);
+		default:
+			return ESP_ERR_INVALID_ARG;
 		}
 	}
 
@@ -116,5 +127,31 @@ public:
 		if (s == "MAX")
 			return In_Range::Max;
 		return In_Range::OFF;
+	}
+
+	void test_relays()
+	{
+		uint16_t relays = 1;
+		do
+		{
+			uint8_t lower = relays;
+			uint8_t upper = relays >> 8;
+
+			expander_a.set_pins(0x00);
+			expander_b.set_pins(0x00);
+
+			vTaskDelay(pdMS_TO_TICKS(5));
+
+			expander_a.set_pins(lower);
+			expander_b.set_pins(upper);
+
+			vTaskDelay(pdMS_TO_TICKS(1000));
+
+			relays <<= 1;
+		} //
+		while (relays);
+
+		expander_a.set_pins(0x00);
+		expander_b.set_pins(0x00);
 	}
 };
