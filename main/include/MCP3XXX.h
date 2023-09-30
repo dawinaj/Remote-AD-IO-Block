@@ -55,7 +55,7 @@ private:
 
 public:
 	static constexpr out_t max = S ? resp_mask / 2 : resp_mask;
-	static constexpr out_t min = S ? -1 - max : 0;
+	static constexpr out_t min = S ? -max - 1 : 0;
 
 	MCP3xxx(spi_host_device_t spihost, gpio_num_t csgpio, int clkhz = 1'000'000, float rv = 5.0f) : ref_volt(rv)
 	{
@@ -224,7 +224,7 @@ private:
 		return out;
 	}
 
-	spi_transaction_t make_transaction(uint8_t chnl, mcp_adc_read_mode_t rdmd)
+	spi_transaction_t make_transaction(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE)
 	{
 		// Request/Response format (tx/rx).
 		//
