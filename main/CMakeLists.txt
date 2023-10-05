@@ -1,8 +1,24 @@
 
-idf_component_register(SRCS "main.cpp" "src/wifi.cpp" "src/webserver.cpp" "src/json_helper.cpp" "src/adc_task.cpp"
-	INCLUDE_DIRS "." "include/" # "../components/i2c_manager"
-	REQUIRES driver lwip esp_hw_support esp_event esp_netif esp_eth esp_wifi esp_phy nvs_flash esp_http_server i2c_manager)
+idf_component_register(
+	SRCS
+	"main.cpp"
+	"src/wifi.cpp"
+	"src/webserver.cpp"
+	"src/json_helper.cpp"
+	"src/adc_task.cpp"
+	"src/Generator.cpp"
+	"src/GenSignal.cpp"
+	INCLUDE_DIRS
+	"."
+	"include/"
+	REQUIRES
+	driver # i2c spi
+	esp_timer # timer
+	esp_event # wifi
+	esp_netif # wifi
+	esp_wifi # wifi
+	esp_http_server # server
+	i2c_manager # mcp23008
+)
 
 component_compile_options(-std=gnu++2a)
-
-# "src/connection_hdlr.cpp" "src/exchange_hdlr.cpp" "src/socket_helper.cpp"

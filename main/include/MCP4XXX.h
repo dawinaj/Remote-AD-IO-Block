@@ -30,6 +30,8 @@ class MCP4xxx
 
 public:
 	using in_t = std::conditional_t<(B <= 8), uint8_t, uint16_t>;
+	static constexpr mcp_dac_bits_t bits = B;
+	static constexpr mcp_adc_channels_t channels = C;
 
 private:
 	spi_device_handle_t spi_hdl;
@@ -58,7 +60,7 @@ public:
 			.clock_speed_hz = clkhz,
 			.input_delay_ns = 0,
 			.spics_io_num = csgpio,
-			.flags = SPI_DEVICE_HALFDUPLEX,
+			.flags = SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY,
 			.queue_size = 1,
 			.pre_cb = NULL,
 			.post_cb = NULL,
@@ -68,6 +70,7 @@ public:
 			spi_bus_add_device(spihost, &dev_cfg, &spi_hdl),
 			err, TAG, "Failed to add device to SPI bus!");
 
+		ESP_LOGI(TAG, "Constructed with host: %d, pin: %d", spihost, csgpio);
 		return;
 
 	err:
@@ -105,7 +108,7 @@ public:
 
 	void set_float_volt(bool chnl, float flv)
 	{
-		spi_transaction_t trx = make_transaction(chnl);
+		spi_transaction_t trx = make_trx(chnl);
 
 		in_t in = std::min(flv / ref_volt, 1.0f) * max;
 
@@ -116,7 +119,7 @@ public:
 
 	void shutdown_channel(bool chnl)
 	{
-		spi_transaction_t trx = make_transaction(chnl, true);
+		spi_transaction_t trx = make_trx(chnl, true);
 		send_trx(trx);
 		recv_trx();
 	}
@@ -155,7 +158,7 @@ public:
 		*reinterpret_cast<uint32_t *>(trx.tx_data) = SPI_SWAP_DATA_TX(in, B);
 	}
 
-	spi_transaction_t make_transaction(bool chnl, bool shdn = false)
+	spi_transaction_t make_trx(bool chnl, bool shdn = false)
 	{
 		// Request format (tx)
 		//

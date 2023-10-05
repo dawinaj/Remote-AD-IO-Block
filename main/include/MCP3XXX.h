@@ -45,10 +45,11 @@ class MCP3xxx
 
 public:
 	using out_t = std::conditional_t<S, sout_t, uout_t>;
+	static constexpr mcp_adc_bits_t bits = B;
+	static constexpr mcp_adc_channels_t channels = C;
 
 private:
 	spi_device_handle_t spi_hdl;
-	float ref_volt;
 
 	static constexpr uout_t resp_mask = (1u << B) - 1;
 	static constexpr uout_t sign_mask = S ? (1u << (B - 1)) : 0; // only used for signed anyway, but w/e
@@ -57,7 +58,7 @@ public:
 	static constexpr out_t max = S ? resp_mask / 2 : resp_mask;
 	static constexpr out_t min = S ? -max - 1 : 0;
 
-	MCP3xxx(spi_host_device_t spihost, gpio_num_t csgpio, int clkhz = 1'000'000, float rv = 5.0f) : ref_volt(rv)
+	MCP3xxx(spi_host_device_t spihost, gpio_num_t csgpio, int clkhz = 1'000'000)
 	{
 		esp_err_t ret = ESP_OK;
 
@@ -72,7 +73,7 @@ public:
 			.clock_speed_hz = clkhz,
 			.input_delay_ns = 0,
 			.spics_io_num = csgpio,
-			.flags = SPI_DEVICE_HALFDUPLEX,
+			.flags = SPI_DEVICE_HALFDUPLEX, // | SPI_DEVICE_NO_DUMMY,
 			.queue_size = 1,
 			.pre_cb = NULL,
 			.post_cb = NULL,
@@ -121,33 +122,29 @@ public:
 		// spi_acq = false;
 		return ESP_OK;
 	}
-	/*/
-		out_t get_signed_raw(uint8_t chnl, mcp_read_mode_t rdmd = MCP_READ_SINGLE, size_t scnt = 1)
-		{
 
-			spi_transaction_t spi_trx = make_transaction(chnl, rdmd);
-
-			int32_t sum = 0;
-			int32_t raw;
-
-			for (size_t i = 0; i < scnt; ++i)
-			{
-				raw = get_response(&spi_trx);
-				if (raw == -1)
-					goto errgs;
-				sum += raw;
-			}
-
-			return (sum + ((sum < 0) ? -scnt : scnt) / 2) / scnt;
-
-		errgs:
-			return 0;
-		}
 	//*/
+	out_t get_signed_raw(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE, size_t scnt = 1)
+	{
+
+		spi_transaction_t spi_trx = make_trx(chnl, rdmd);
+
+		int32_t sum = 0;
+		int32_t raw;
+
+		for (size_t i = 0; i < scnt; ++i)
+		{
+			send_trx(spi_trx);
+			recv_trx();
+			sum += parse_trx(spi_trx);
+		}
+
+		return sum / scnt; //(sum + ((sum < 0) ? -scnt : scnt) / 2) / scnt;
+	}
 
 	float get_float_volt(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE, size_t scnt = 1)
 	{
-		spi_transaction_t trx1 = make_transaction(chnl, rdmd);
+		spi_transaction_t trx1 = make_trx(chnl, rdmd);
 		// spi_transaction_t trx2 = trx1;
 
 		int32_t sum = 0;
@@ -159,32 +156,28 @@ public:
 			sum += parse_trx(trx1);
 		}
 
-		/*/
-		size_t i = 0;
+		// size_t i = 0;
+		// send_trx(trx1);
+		// ++i;
+		// while (i < scnt)
+		// {
+		// 	recv_trx();
+		// 	send_trx(trx2);
+		// 	++i;
+		// 	sum += parse_trx(trx1);
+		// 	recv_trx();
+		// 	if (i < scnt)
+		// 	{
+		// 		send_trx(trx1);
+		// 		++i;
+		// 	}
+		// 	sum += parse_trx(trx2);
+		// }
 
-		send_trx(trx1);
-		++i;
-
-		while (i < scnt)
-		{
-			recv_trx();
-			send_trx(trx2);
-			++i;
-			sum += parse_trx(trx1);
-			recv_trx();
-			if (i < scnt)
-			{
-				send_trx(trx1);
-				++i;
-			}
-			sum += parse_trx(trx2);
-		}
-		//*/
-
-		return sum * ref_volt / scnt / max;
+		return sum * 4.096 / scnt / max;
 	}
+	//*/
 
-private:
 	inline esp_err_t send_trx(spi_transaction_t &trx)
 	{
 		esp_err_t ret = ESP_OK;
@@ -213,9 +206,12 @@ private:
 		return ret;
 	}
 
-	inline out_t parse_trx(spi_transaction_t &trx)
+	inline out_t parse_trx(const spi_transaction_t &trx)
 	{
-		uout_t out = SPI_SWAP_DATA_RX(*reinterpret_cast<uint32_t *>(trx.rx_data), B);
+		uout_t out = SPI_SWAP_DATA_RX(*reinterpret_cast<const uint32_t *>(trx.rx_data), B);
+
+		// ESP_LOGW(TAG, "0x%.8lx", *reinterpret_cast<const uint32_t *>(trx.rx_data));
+		// ESP_LOGW(TAG, "0x%.4x", out);
 
 		if constexpr (S)		   // if signed
 			if (out & sign_mask)   // if negative
@@ -224,7 +220,7 @@ private:
 		return out;
 	}
 
-	spi_transaction_t make_transaction(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE)
+	spi_transaction_t make_trx(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE)
 	{
 		// Request/Response format (tx/rx).
 		//
