@@ -130,15 +130,14 @@ extern "C" void app_main(void)
 	}
 	//*/
 
-	ESP_LOGI(TAG, "Starting testing the voltage output");
-	board->generate_waveform();
-
-	// ESP_LOGI(TAG, "Starting calibrating the inputs");
-	// int16_t val = Board::volt_to_generated(5);
-	// MCP4922::in_t code = Board::conv_gen(val);
-	// board->dac.write_trx(board->trx_out[1], code);
-	// board->dac.send_trx(board->trx_out[1]);
-	// board->dac.recv_trx();
+	/*/
+	ESP_LOGI(TAG, "Starting calibrating the outputs");
+	int16_t val = Board::volt_to_generated(5);
+	MCP4922::in_t code = Board::conv_gen(val);
+	board->dac.write_trx(board->trx_out[1], code);
+	board->dac.send_trx(board->trx_out[1]);
+	board->dac.recv_trx();
+	//*/
 
 	// vTaskDelay(pdMS_TO_TICKS(5000));
 
@@ -156,7 +155,7 @@ extern "C" void app_main(void)
 
 	while (true)
 	{
-		ESP_LOGV(TAG, "Available memory: %" PRId32 "\tMax: %" PRId32, esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
+		ESP_LOGW(TAG, "Available memory: %" PRId32 "\tMax: %" PRId32, esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
 		vTaskDelay(pdMS_TO_TICKS(20000));
 	}
 

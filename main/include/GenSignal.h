@@ -10,9 +10,7 @@
 #include "nlohmann/json.hpp"
 using namespace nlohmann;
 
-using SignalEnumT = int8_t;
-
-enum SignalType : SignalEnumT
+enum SignalType : int8_t
 {
 	Virtual = 0,
 	Const,
@@ -21,20 +19,20 @@ enum SignalType : SignalEnumT
 	Square,
 	Triangle,
 
-	Delay = std::numeric_limits<SignalEnumT>::min(),
+	Delay = std::numeric_limits<int8_t>::min(),
+	
 };
 
 NLOHMANN_JSON_SERIALIZE_ENUM(SignalType,
-	{
-		{ SignalType::Virtual, "Virtual" },
-		{ SignalType::Const, "Const" },
-		{ SignalType::Impulse, "Impulse" },
-		{ SignalType::Sine, "Sine" },
-		{ SignalType::Square, "Square" },
-		{ SignalType::Triangle, "Triangle" },
-		{ SignalType::Delay, "Delay" },
-	}
-)
+							 {
+								 {SignalType::Virtual, "Virtual"},
+								 {SignalType::Const, "Const"},
+								 {SignalType::Impulse, "Impulse"},
+								 {SignalType::Sine, "Sine"},
+								 {SignalType::Square, "Square"},
+								 {SignalType::Triangle, "Triangle"},
+								 {SignalType::Delay, "Delay"},
+							 })
 
 class Signal;
 
@@ -59,20 +57,22 @@ public:
 
 	friend void to_json(json &, const SignalHdl &);
 	friend void from_json(const json &, SignalHdl &);
-
-	template <typename T, typename... Args>
-	static SignalHdl make(Args &&...args)
-	{
-		// SignalPtr sp = std::unique_ptr<T>(new T(std::forward<Args>(args)...));
-		SignalPtr sp = std::make_unique<T>(std::forward<Args>(args)...);
-		return SignalHdl(std::move(sp));
-	}
 };
+
+template <typename T, typename... Args>
+SignalHdl make_signal(Args &&...args)
+{
+	// SignalPtr sp = std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+	std::unique_ptr<Signal> sp = std::make_unique<T>(std::forward<Args>(args)...);
+	return SignalHdl(std::move(sp));
+}
 
 class Signal
 {
-	static constexpr const char *const TAG = "Signal";
 	friend SignalHdl;
+
+protected:
+	static constexpr const char *const TAG = "Signal";
 
 public:
 	Signal() = default;

@@ -61,22 +61,22 @@ void from_json(const json &j, SignalHdl &o)
 		ESP_LOGE(SignalHdl::TAG, "Cannot create pure virtual class!");
 		break;
 	case SignalType::Const:
-		o = SignalHdl::make<SignalConst>(j["p"]);
+		o = make_signal<SignalConst>(j["p"]);
 		break;
 	case SignalType::Impulse:
-		o = SignalHdl::make<SignalImpulse>(j["p"]);
+		o = make_signal<SignalImpulse>(j["p"]);
 		break;
 	case SignalType::Sine:
-		o = SignalHdl::make<SignalSine>(j["p"]);
+		o = make_signal<SignalSine>(j["p"]);
 		break;
 	case SignalType::Square:
-		o = SignalHdl::make<SignalSquare>(j["p"]);
+		o = make_signal<SignalSquare>(j["p"]);
 		break;
 	case SignalType::Triangle:
-		o = SignalHdl::make<SignalTriangle>(j["p"]);
+		o = make_signal<SignalTriangle>(j["p"]);
 		break;
 	case SignalType::Delay:
-		o = SignalHdl::make<SignalDelay>(j["p"]);
+		o = make_signal<SignalDelay>(j["p"]);
 		break;
 	default:
 		ESP_LOGE(SignalHdl::TAG, "Such generator does not exist!");

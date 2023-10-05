@@ -11,9 +11,10 @@
 #include <esp_timer.h>
 
 #include "MCP230XX.h"
-
 #include "MCP3XXX.h"
 #include "MCP4XXX.h"
+
+#include "Generator.h"
 
 enum class Input : uint8_t
 {
@@ -40,6 +41,38 @@ enum class In_Range : uint8_t
 	Keep = uint8_t(-1),
 };
 
+struct InputMeasCfg
+{
+	typedef bool (*in_trig_fcn)(int16_t);
+
+	std::vector<Input> *port_order;
+	int16_t *buffer;
+	size_t sample_count;
+	size_t repeat = 1;
+	size_t period_us = 0;
+	int64_t time_sync = 0;
+	struct
+	{
+		Input port = Input::None;
+		in_trig_fcn callback = nullptr;
+	} trigger;
+	struct
+	{
+		Generator *voltage_gen = nullptr;
+		Generator *current_gen = nullptr;
+	} output;
+};
+
+struct OutputGenCfg
+{
+	Generator *voltage_gen = nullptr;
+	Generator *current_gen = nullptr;
+	size_t sample_count = 0;
+	size_t period_us = 0;
+	int64_t time_sync = 0;
+	bool reverse_order = false;
+};
+
 class Board
 {
 public:
@@ -61,8 +94,6 @@ public:
 public:
 	static constexpr float v_ref = 4.096f;
 	// static constexpr float mv_off = 2048;
-
-	typedef bool (*in_trig_fcn)(int16_t);
 
 public:
 	Board() : expander_a(I2C_NUM_0, 0b000),
@@ -165,84 +196,101 @@ public:
 		}
 	}
 
-	esp_err_t measure_inputs(const std::vector<Input> &inputs, int16_t *buf, size_t cnt, size_t rpt = 1, size_t intrvl = 0, int64_t *sync = nullptr, Input trigin = Input::None, in_trig_fcn trigfcn = nullptr)
+	esp_err_t measure_inputs(InputMeasCfg &cnf)
 	{
-		if (inputs.empty() || buf == nullptr)
+		if (cnf.port_order == nullptr || cnf.port_order->empty())
 			return ESP_ERR_INVALID_ARG;
-		if (cnt == 0)
+		if (cnf.buffer == nullptr)
+			return ESP_ERR_INVALID_ARG;
+		if (cnf.sample_count == 0)
 			return ESP_OK;
+		if (cnf.repeat == 0)
+			return ESP_ERR_INVALID_ARG;
 
-		bool issync = (sync != nullptr) && (*sync != 0);
-		bool dotrig = (trigin != Input::None) && (trigfcn != nullptr) && !issync;
+		bool dotrig = (cnf.trigger.port != Input::None) && (cnf.trigger.callback != nullptr) && (cnf.time_sync == 0);
 
-		int64_t next;
-		int64_t now;
-		if (sync)
-			next = *sync;
-		else
-			next = esp_timer_get_time() + 1; // + intrvl;
+		int64_t next = cnf.time_sync;
+		int64_t now = esp_timer_get_time();
+		if (next < now)
+			next = now + cnf.period_us;
 
 		size_t i = 0;
 
 		if (dotrig)
 		{
-			spi_transaction_t &trx = trx_in[static_cast<uint8_t>(trigin) - 1];
+			spi_transaction_t &trx = trx_in[static_cast<uint8_t>(cnf.trigger.port) - 1];
 			while (1)
 			{
 				while ((now = esp_timer_get_time()) < next)
 					NOOP;
-				next = now + intrvl;
+				next = now + cnf.period_us;
 
 				adc.send_trx(trx);
 				adc.recv_trx();
-				if (trigfcn(conv_meas(adc.parse_trx(trx))))
+				if (cnf.trigger.callback(conv_meas(adc.parse_trx(trx))))
 					break;
 			}
 		}
 
 		while (1)
 		{
-			for (Input in : inputs)
+			for (Input in : *cnf.port_order)
 			{
-				for (size_t r = rpt; r > 0; --r)
+				for (size_t r = cnf.repeat; r > 0; --r)
 				{
 					while ((now = esp_timer_get_time()) < next)
 						NOOP;
-					next = now + intrvl;
+					next = now + cnf.period_us;
 
 					if (in != Input::None) [[likely]]
 					{
 						spi_transaction_t &trx = trx_in[static_cast<uint8_t>(in) - 1];
 						adc.send_trx(trx);
 						adc.recv_trx();
-						buf[i] = conv_meas(adc.parse_trx(trx));
+						cnf.buffer[i] = conv_meas(adc.parse_trx(trx));
 					}
-					if (++i >= cnt) [[unlikely]]
+					if (++i >= cnf.sample_count) [[unlikely]]
 						goto done;
 				}
 			}
 		}
 	done:
-		if (sync != nullptr)
-			*sync = next;
+		cnf.time_sync = next;
 		return ESP_OK;
 	}
 
-	esp_err_t generate_waveform()
-	{
-		while (1)
-			for (int i = -10; i <= 10; i += 2)
-			{
-				int16_t val = volt_to_generated(i);
-				MCP4922::in_t code = conv_gen(val);
-				ESP_LOGI(TAG, "Setting:\t%fV\t0x%04hx\t0x%04hx", (float)i, val, code);
+	//
 
-				dac.write_trx(trx_out[0], code);
-				dac.send_trx(trx_out[0]);
-				dac.recv_trx();
-				dac.write_trx(trx_out[1], code);
-				dac.send_trx(trx_out[1]);
-				dac.recv_trx();
+	esp_err_t generate_outputs(OutputGenCfg &cnf)
+	{
+		if (cnf.voltage_gen == nullptr && cnf.current_gen == nullptr)
+			return ESP_ERR_INVALID_ARG;
+		if (cnf.sample_count == 0)
+			return ESP_OK;
+
+		spi_transaction_t &trx1 = trx_out[cnf.reverse_order];
+		spi_transaction_t &trx2 = trx_out[!cnf.reverse_order];
+
+		Generator *gen1 = !cnf.reverse_order ? cnf.voltage_gen : cnf.current_gen;
+		Generator *gen2 = !cnf.reverse_order ? cnf.current_gen : cnf.voltage_gen;
+
+		while (1)
+			for (size_t i = 0; i < cnf.sample_count; ++i)
+			{
+				if (gen1 != nullptr)
+				{
+					MCP4922::in_t code = conv_gen(volt_to_generated(gen1->get(i)));
+					dac.write_trx(trx1, code);
+					dac.send_trx(trx1);
+					dac.recv_trx();
+				}
+				if (gen2 != nullptr)
+				{
+					MCP4922::in_t code = conv_gen(volt_to_generated(gen2->get(i)));
+					dac.write_trx(trx2, code);
+					dac.send_trx(trx2);
+					dac.recv_trx();
+				}
 
 				vTaskDelay(pdMS_TO_TICKS(2000));
 			}
@@ -318,6 +366,11 @@ public:
 
 	static inline int16_t volt_to_generated(float val)
 	{
+		if (val >= 10.24f) [[unlikely]]
+			return std::numeric_limits<int16_t>::max();
+		if (val <= -10.24f) [[unlikely]]
+			return std::numeric_limits<int16_t>::min();
+
 		constexpr float ratio = std::numeric_limits<int16_t>::max() / v_ref * 4.0f / 10.0f; // / 10.24f === / v_ref * 4 / 10
 		return std::round(val * ratio);
 	}
