@@ -9,10 +9,11 @@
 
 class Generator
 {
-	static constexpr const char* const TAG = "Generator";
+	static constexpr const char *const TAG = "Generator";
 	using Signals = std::vector<std::pair<float, SignalHdl>>;
 
 	Signals signals;
+	size_t current_step;
 
 public:
 	Generator() = default;
@@ -23,7 +24,14 @@ public:
 
 	void add(float, SignalHdl &&);
 	float get(size_t);
+	float forward();
+
+	bool empty() const;
+	size_t size() const;
 
 	friend void to_json(json &, const Generator &);
 	friend void from_json(const json &, Generator &);
+
+private:
+	inline float calculate() const;
 };

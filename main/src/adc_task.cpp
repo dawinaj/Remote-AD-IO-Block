@@ -27,8 +27,8 @@ void adc_task(void *arg)
 		// int16_t code = board->adc.get_signed_raw(0, MCP_ADC_READ_SINGLE, 1);
 		// ESP_LOGI(TAG, "Code: 0x%04x ", code);
 		// vTaskDelay(pdMS_TO_TICKS(500));
-		float voltage = board->adc.get_float_volt(0, MCP_ADC_READ_SINGLE, 1);
-		ESP_LOGI(TAG, "Voltage: %f V", voltage);
+		// float voltage = board->adc.get_float_volt(0, MCP_ADC_READ_SINGLE, 1);
+		// ESP_LOGI(TAG, "Voltage: %f V", voltage);
 
 		vTaskDelay(pdMS_TO_TICKS(500));
 	}

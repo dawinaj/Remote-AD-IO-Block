@@ -8,6 +8,7 @@ idf_component_register(
 	"src/adc_task.cpp"
 	"src/Generator.cpp"
 	"src/GenSignal.cpp"
+	"src/Board.cpp"
 	INCLUDE_DIRS
 	"."
 	"include/"

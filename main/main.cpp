@@ -1,3 +1,5 @@
+#define NDEBUG 1
+
 #include "settings.h"
 
 #include <string>
@@ -65,7 +67,7 @@ Board *board = nullptr;
 extern "C" void app_main(void)
 {
 	ESP_LOGI(TAG, "H E N L O B E N C, Matte kudasai! Compiled at [" __DATE__ " " __TIME__ "]");
-	esp_log_level_set("*", ESP_LOG_INFO);
+	esp_log_level_set("*", ESP_LOG_VERBOSE);
 
 	// ESP_ERROR_CHECK(gpio_install_isr_service(0));
 	// ESP_LOGI(TAG, "GPIO_ISR  init done");
@@ -80,14 +82,15 @@ extern "C" void app_main(void)
 	// ESP_LOGI(TAG, "NVS_FLASH init done");
 
 	vTaskDelay(pdMS_TO_TICKS(100));
-	ESP_ERROR_CHECK(wifi_init());
-	ESP_LOGI(TAG, "WIFI      init done");
 
-	// gpio_set_direction(GPIO_NUM_18, GPIO_MODE_OUTPUT);
-	// gpio_set_direction(GPIO_NUM_19, GPIO_MODE_INPUT);
+	ESP_ERROR_CHECK(wifi_init());
+	ESP_LOGI(TAG, "WIFI init done");
 
 	i2c_manager_init(I2C_NUM_0);
+	ESP_LOGI(TAG, "I2C init done");
+
 	init_spi();
+	ESP_LOGI(TAG, "SPI init done");
 
 	board = new Board();
 
@@ -139,19 +142,9 @@ extern "C" void app_main(void)
 	board->dac.recv_trx();
 	//*/
 
-	// vTaskDelay(pdMS_TO_TICKS(5000));
+	httpd_handle_t server = start_webserver();
 
-	// start_adc_task();
-	// vTaskDelay(pdMS_TO_TICKS(4000));
-	// stop_adc_task();
-
-	//
-
-	// vTaskSuspend(NULL);
-
-	//
-
-	// httpd_handle_t server = start_webserver();
+	(void)server;
 
 	while (true)
 	{

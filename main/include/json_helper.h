@@ -5,9 +5,9 @@ using namespace nlohmann;
 
 //
 
-json create_empty_response();
+ordered_json create_empty_response();
 
-json create_ok_response();
-json create_err_response(int = 0, const std::string & = "");
+ordered_json create_ok_response();
+ordered_json create_err_response(const std::vector<std::string> &);
 
-json create_welcome_response();
+ordered_json create_welcome_response();
