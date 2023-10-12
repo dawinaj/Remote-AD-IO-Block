@@ -5,9 +5,6 @@ idf_component_register(
 	"src/wifi.cpp"
 	"src/webserver.cpp"
 	"src/json_helper.cpp"
-	"src/adc_task.cpp"
-	"src/Generator.cpp"
-	"src/GenSignal.cpp"
 	"src/Board.cpp"
 	INCLUDE_DIRS
 	"."
@@ -22,4 +19,4 @@ idf_component_register(
 	i2c_manager # mcp23008
 )
 
-component_compile_options(-std=gnu++2a)
+component_compile_options("-std=gnu++2a" "-ffast-math" "-Wno-maybe-uninitialized")

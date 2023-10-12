@@ -1,5 +1,9 @@
+#include "webserver.h"
+
 #include "settings.h"
 
+#include <algorithm>
+#include <cctype>
 #include <string>
 #include <map>
 #include <memory> // move
@@ -9,7 +13,11 @@
 #include <esp_log.h>
 #include <esp_system.h>
 
-#include <esp_http_server.h>
+// #include <esp_http_server.h>
+
+#define FOLLY_NO_CONFIG
+#include "folly/ProducerConsumerQueue.h"
+using folly::ProducerConsumerQueue;
 
 #include "json_helper.h"
 
@@ -17,7 +25,30 @@
 
 static const char *TAG = "WebServer";
 
+NLOHMANN_JSON_SERIALIZE_ENUM(In_Range,
+							 {
+								 {In_Range::OFF, "off"},
+								 {In_Range::Min, "min"},
+								 {In_Range::Med, "med"},
+								 {In_Range::Max, "max"},
+							 })
+
 //
+
+bool str_is_ascii(const std::string &s)
+{
+	return std::all_of(s.begin(), s.end(),
+					   [](unsigned char ch)
+					   { return ch <= 127; });
+}
+
+void str_to_lower(std::string &s)
+{
+	std::transform(s.begin(), s.end(), s.begin(),
+				   [](unsigned char c)
+				   { return std::tolower(c); });
+}
+
 /*/
 std::string get_query(httpd_req_t *r)
 {
@@ -78,18 +109,6 @@ void string_to_uint(const std::string &str, T &ref)
 }
 //*/
 
-void send_measurements(const int16_t *buf, size_t len, void *ctx)
-{
-	 httpd_req_t *req = static_cast<httpd_req_t *>(ctx);
-
-	const char *str = reinterpret_cast<const char *>(buf);
-	len *= sizeof(int16_t) / sizeof(char);
-
-	httpd_resp_send_chunk(req, str, len);
-}
-
-//
-
 static esp_err_t welcome_handler(httpd_req_t *req)
 {
 	httpd_resp_set_status(req, HTTPD_200);
@@ -126,60 +145,64 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	Board::TriggerCfg trigger;
 	Board::InputCfg input;
 	Board::OutputCfg output;
+	In_Range range[4] = {In_Range::OFF, In_Range::OFF, In_Range::OFF, In_Range::OFF};
 
 	std::vector<std::string> errors;
 
-	const json q = json::parse(post, nullptr, false);
-	if (!q.is_discarded())
+	if (str_is_ascii(post))
 	{
-		if (q.contains("general"))
+		const json q = json::parse(post, nullptr, false);
+		if (!q.is_discarded())
 		{
-			const json &j = q.at("general");
-			if (j.is_object())
+			if (q.contains("general"))
 			{
-				if (j.contains("sample_count") && j.at("sample_count").is_number_unsigned())
-					general.sample_count = j.at("sample_count").get<uint32_t>();
-				else
-					errors.push_back("general.sample_count is invalid!");
+				const json &j = q.at("general");
+				if (j.is_object())
+				{
+					if (j.contains("sample_count") && j.at("sample_count").is_number_unsigned())
+						general.sample_count = j.at("sample_count").get<uint32_t>();
+					else
+						errors.push_back("general.sample_count is invalid!");
 
-				if (j.contains("period_us") && j.at("period_us").is_number_unsigned())
-					general.period_us = j.at("period_us").get<uint32_t>();
+					if (j.contains("period_us") && j.at("period_us").is_number_unsigned())
+						general.period_us = j.at("period_us").get<uint32_t>();
+					else
+						errors.push_back("general.period_us is invalid!");
+				}
 				else
-					errors.push_back("general.period_us is invalid!");
+					errors.push_back("general is not an object!");
 			}
 			else
-				errors.push_back("general is not an object!");
-		}
-		else
-			errors.push_back("general not given!");
+				errors.push_back("general not given!");
 
-		//
-
-		if (q.contains("trigger"))
-		{
-			const json &j = q.at("trigger");
-			if (j.is_object())
+			if (q.contains("trigger"))
 			{
-				if (j.contains("port"))
+				const json &j = q.at("trigger");
+				if (j.is_object())
 				{
-					if (j.at("port").is_string())
+					if (j.contains("port"))
 					{
-						const std::string &str = j.at("port").get_ref<const json::string_t &>();
-						if (str.length() == 1)
+						if (j.at("port").is_string())
 						{
-							if (str[0] >= '1' && str[0] <= '4')
-								trigger.port = static_cast<Input>(str[0] - '0');
+							const std::string &str = j.at("port").get_ref<const json::string_t &>();
+							if (str.length() == 1)
+							{
+								if (str[0] >= '1' && str[0] <= '4')
+									trigger.port = static_cast<Input>(str[0] - '0');
+								else
+									errors.push_back("trigger.port is invalid!");
+							}
 							else
 								errors.push_back("trigger.port is invalid!");
 						}
-						else
-							errors.push_back("trigger.port is invalid!");
-					}
-					else if (j.at("port").is_number_unsigned())
-					{
-						size_t prt = j.at("port").get<size_t>();
-						if (prt >= 1 && prt <= 4)
-							trigger.port = static_cast<Input>(prt);
+						else if (j.at("port").is_number_unsigned())
+						{
+							size_t prt = j.at("port").get<size_t>();
+							if (prt >= 1 && prt <= 4)
+								trigger.port = static_cast<Input>(prt);
+							else
+								errors.push_back("trigger.port is invalid!");
+						}
 						else
 							errors.push_back("trigger.port is invalid!");
 					}
@@ -187,105 +210,138 @@ static esp_err_t settings_handler(httpd_req_t *req)
 						errors.push_back("trigger.port is invalid!");
 				}
 				else
-					errors.push_back("trigger.port is invalid!");
+					errors.push_back("trigger is not an object!");
 			}
-			else
-				errors.push_back("trigger is not an object!");
-		}
 
-		//
-
-		if (q.contains("input"))
-		{
-			const json &j = q.at("input");
-			if (j.is_object())
+			if (q.contains("input"))
 			{
-				if (j.contains("port_order") && j.at("port_order").is_string())
+				const json &j = q.at("input");
+				if (j.is_object())
 				{
-					const std::string &str = j.at("port_order").get_ref<const json::string_t &>();
-					if (!str.empty())
-						for (char c : str)
-						{
-							if (c >= '1' && c <= '4')
-								input.port_order.push_back(static_cast<Input>(c - '0'));
-							else
+					if (j.contains("port_order") && j.at("port_order").is_string())
+					{
+						const std::string &str = j.at("port_order").get_ref<const json::string_t &>();
+						if (!str.empty())
+							for (char c : str)
 							{
-								errors.push_back("input.port_order is invalid!");
-								break;
+								if (c >= '1' && c <= '4')
+									input.port_order.push_back(static_cast<Input>(c - '0'));
+								else
+								{
+									errors.push_back("input.port_order is invalid!");
+									break;
+								}
 							}
-						}
+						else
+							errors.push_back("input.port_order is invalid!");
+					}
 					else
 						errors.push_back("input.port_order is invalid!");
+
+					if (j.contains("repeats"))
+					{
+						if (j.at("repeats").is_number_unsigned())
+							input.repeats = j.at("period_us").get<uint32_t>();
+						else
+							errors.push_back("input.repeats is invalid!");
+					}
 				}
 				else
-					errors.push_back("input.port_order is invalid!");
-
-				if (j.contains("repeats"))
-				{
-					if (j.at("repeats").is_number_unsigned())
-						input.repeats = j.at("period_us").get<uint32_t>();
-					else
-						errors.push_back("input.repeats is invalid!");
-				}
-
-				input.callback = send_measurements;
+					errors.push_back("input is not an object!");
 			}
-			else
-				errors.push_back("input is not an object!");
-		}
 
-		//
-
-		if (q.contains("output"))
-		{
-			const json &j = q.at("output");
-			if (j.is_object())
+			if (q.contains("output"))
 			{
-				if (j.contains("voltage_gen"))
+				const json &j = q.at("output");
+				if (j.is_object())
 				{
-					if (j.at("voltage_gen").is_object())
+					if (j.contains("voltage_gen"))
 					{
-						try
+						if (j.at("voltage_gen").is_array())
 						{
-							output.voltage_gen = j.at("voltage_gen").get<Generator>();
+							try
+							{
+								output.voltage_gen = j.at("voltage_gen").get<Generator>();
+							}
+							catch (json::exception &e)
+							{
+								errors.push_back("output.voltage_gen failed to parse!");
+								ESP_LOGE(TAG, "%s", e.what());
+							}
 						}
-						catch (json::exception &e)
-						{
+						else
 							errors.push_back("output.voltage_gen is invalid!");
-						}
 					}
-					else
-						errors.push_back("output.voltage_gen is invalid!");
-				}
 
-				if (j.contains("current_gen"))
-				{
-					if (j.at("current_gen").is_object())
+					if (j.contains("current_gen"))
 					{
-						try
+						if (j.at("current_gen").is_array())
 						{
-							output.current_gen = j.at("current_gen").get<Generator>();
+							try
+							{
+								output.current_gen = j.at("current_gen").get<Generator>();
+							}
+							catch (json::exception &e)
+							{
+								errors.push_back("output.current_gen failed to parse!");
+							}
 						}
-						catch (json::exception &e)
-						{
-							errors.push_back("output.voltage_gen is invalid!");
-						}
+						else
+							errors.push_back("output.current_gen is invalid!");
 					}
-					else
-						errors.push_back("output.voltage_gen is invalid!");
-				}
 
-				if (j.contains("reverse_order"))
-				{
-					if (j.at("reverse_order").is_boolean())
-						output.reverse_order = j.at("reverse_order").get<bool>();
-					else
-						errors.push_back("output.reverse_order is invalid!");
+					if (j.contains("reverse_order"))
+					{
+						if (j.at("reverse_order").is_boolean())
+							output.reverse_order = j.at("reverse_order").get<bool>();
+						else
+							errors.push_back("output.reverse_order is invalid!");
+					}
 				}
+				else
+					errors.push_back("output is not an object!");
 			}
-			else
-				errors.push_back("output is not an object!");
+
+			if (q.contains("ranges"))
+			{
+				const json &j = q.at("ranges");
+				if (j.is_object())
+				{
+					if (j.contains("in1"))
+					{
+						if (j.at("in1").is_string())
+							range[0] = j.at("in1").get<In_Range>();
+						else
+							errors.push_back("ranges.in1 is invalid!");
+					}
+					if (j.contains("in2"))
+					{
+						if (j.at("in2").is_string())
+							range[1] = j.at("in2").get<In_Range>();
+						else
+							errors.push_back("ranges.in2 is invalid!");
+					}
+					if (j.contains("in3"))
+					{
+						if (j.at("in3").is_string())
+							range[2] = j.at("in3").get<In_Range>();
+						else
+							errors.push_back("ranges.in3 is invalid!");
+					}
+					if (j.contains("in4"))
+					{
+						if (j.at("in4").is_string())
+							range[3] = j.at("in4").get<In_Range>();
+						else
+							errors.push_back("ranges.in4 is invalid!");
+					}
+				}
+				else
+					errors.push_back("ranges is not an object!");
+			}
 		}
+		else
+			errors.push_back("JSON is invalid!");
 	}
 	else
 		errors.push_back("JSON is invalid!");
@@ -302,16 +358,26 @@ static esp_err_t settings_handler(httpd_req_t *req)
 		return ESP_OK;
 	}
 
+	board->set_input_ranges(range[0], range[1], range[2], range[3]);
+
 	const Board::ExecCfg &exec = board->validate_configs(std::move(general), std::move(trigger), std::move(input), std::move(output));
 
 	httpd_resp_set_status(req, HTTPD_200);
 	httpd_resp_set_type(req, "application/json");
 
 	ordered_json res = create_ok_response();
-	res["message"] = "Settings have been validated. See execution plan: ${data.exec}.";
+	res["message"] = "Settings have been validated. Execution plan: ${data.exec}. Measurement multipliers: ${data.mult}. Units: ${data.unit}";
 	res["data"]["exec"]["do_trigger"] = exec.do_trg;
 	res["data"]["exec"]["do_input"] = exec.do_inp;
 	res["data"]["exec"]["do_output"] = exec.do_out;
+	res["data"]["mult"]["in1"] = board->input_multiplier(Input::In1);
+	res["data"]["mult"]["in2"] = board->input_multiplier(Input::In2);
+	res["data"]["mult"]["in3"] = board->input_multiplier(Input::In3);
+	res["data"]["mult"]["in4"] = board->input_multiplier(Input::In4);
+	res["data"]["unit"]["in1"] = "V";
+	res["data"]["unit"]["in2"] = "V";
+	res["data"]["unit"]["in3"] = "V";
+	res["data"]["unit"]["in4"] = "mA";
 	std::string out = res.dump();
 	httpd_resp_send(req, out.c_str(), out.length());
 
@@ -320,12 +386,67 @@ static esp_err_t settings_handler(httpd_req_t *req)
 
 //
 
+void board_io_task(void *arg)
+{
+	{
+		auto *queue = static_cast<ProducerConsumerQueue<int16_t> *>(arg);
+
+		auto writefcn = [queue](int16_t in) -> bool
+		{
+			return queue->write(in);
+		};
+
+		board->execute(std::move(writefcn));
+	}
+	vTaskSuspend(NULL);
+	// wait for external wakeup
+	vTaskDelete(NULL);
+}
+
 static esp_err_t io_handler(httpd_req_t *req)
 {
 	httpd_resp_set_status(req, HTTPD_200);
 	httpd_resp_set_type(req, "application/octet-stream");
 
-	board->execute(req);
+	ESP_LOGI(TAG, "Preparing queue...");
+
+	constexpr size_t BUF_LEN = 4096;
+
+	auto *queue = new ProducerConsumerQueue<int16_t>(BUF_LEN * 8);
+
+	auto send_measurements = [req, queue](size_t len)
+	{
+		ESP_LOGI(TAG, "Sending %zu measurements... Approx size %zu", len, queue->sizeGuess());
+		const char *str = reinterpret_cast<const char *>(queue->frontPtr());
+		httpd_resp_send_chunk(req, str, len * sizeof(int16_t));
+		while (len--)
+			queue->popFront();
+	};
+
+	ESP_LOGI(TAG, "Spawning task...");
+
+	TaskHandle_t io_hdl = nullptr;
+	xTaskCreatePinnedToCore(board_io_task, "BoardTask", BOARD_MEM, static_cast<void *>(queue), BOARD_PRT, &io_hdl, CPU1);
+
+	ESP_LOGI(TAG, "Running consumer...");
+
+	do
+	{
+
+		if (queue->sizeGuess() >= BUF_LEN)
+			send_measurements(BUF_LEN);
+		else
+			vTaskDelay(1);
+	} //
+	while (eTaskGetState(io_hdl) != eTaskState::eSuspended);
+
+	vTaskResume(io_hdl); // resumes to delete itself
+
+	while (!queue->isEmpty())
+	{
+		send_measurements(std::min(queue->sizeGuess(), BUF_LEN));
+		vTaskDelay(1);
+	}
 
 	httpd_resp_send_chunk(req, nullptr, 0);
 
@@ -421,7 +542,7 @@ httpd_handle_t start_webserver()
 
 	config.task_priority = HTTP_PRT;
 	config.stack_size = HTTP_MEM;
-	config.core_id = CPU1;
+	config.core_id = CPU0;
 	// config.max_open_sockets = 1;
 
 	// Start the httpd server

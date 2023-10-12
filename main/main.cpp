@@ -28,7 +28,7 @@ void init_spi()
 {
 	spi_bus_config_t bus2_cfg = {
 		.mosi_io_num = GPIO_NUM_13,
-		.miso_io_num = GPIO_NUM_NC,
+		.miso_io_num = GPIO_NUM_12,
 		.sclk_io_num = GPIO_NUM_14,
 		.data2_io_num = GPIO_NUM_NC,
 		.data3_io_num = GPIO_NUM_NC,

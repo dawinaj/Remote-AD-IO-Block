@@ -2,6 +2,7 @@
 
 #include <limits>
 #include <cmath>
+#include <functional>
 
 #include "MCP230XX.h"
 #include "MCP3XXX.h"
@@ -31,16 +32,15 @@ enum class In_Range : uint8_t
 {
 	OFF = 0,
 	Min = 1,
-	Mid = 2,
+	Med = 2,
 	Max = 3,
-	Keep = uint8_t(-1),
 };
 
 class Board
 {
 	static constexpr const char *const TAG = "IOBoard";
-	static constexpr size_t BUF_CNT = 4;
-	static constexpr size_t BUF_LEN = 1024 * 16;
+	// static constexpr size_t BUF_CNT = 2;
+	// static constexpr size_t BUF_LEN = 1024 * 4;
 
 public:
 	struct ExecCfg;
@@ -48,6 +48,8 @@ public:
 	struct TriggerCfg;
 	struct InputCfg;
 	struct OutputCfg;
+
+	using WriteCb = std::function<bool(int16_t)>;
 
 public:
 	static constexpr float v_ref = 4.096f;
@@ -57,14 +59,19 @@ public:
 	~Board();
 
 	esp_err_t set_input_ranges(In_Range, In_Range, In_Range, In_Range);
-	esp_err_t set_input_range(Input, In_Range);
 
-	esp_err_t execute(void *);
+	esp_err_t execute(WriteCb &&);
 
 	const ExecCfg &validate_configs(GeneralCfg &&, TriggerCfg &&, InputCfg &&, OutputCfg &&);
 
 private:
+	void reset_outputs();
+
+private:
 	void test();
+
+public:
+	float input_multiplier(Input) const;
 
 public:
 	static inline int16_t conv_meas(MCP3204::out_t);
@@ -98,11 +105,8 @@ public:
 
 	struct InputCfg
 	{
-		typedef void (*ret_fcn)(const int16_t *, size_t, void *);
 		std::vector<Input> port_order;
 		uint32_t repeats = 1;
-		ret_fcn callback = nullptr;
-		void *ctx = nullptr;
 	};
 
 	struct OutputCfg
@@ -129,5 +133,5 @@ private:
 	spi_transaction_t trx_in[4];
 	spi_transaction_t trx_out[2];
 
-	std::array<std::array<int16_t, BUF_LEN>, BUF_CNT> buffers;
+	// std::array<std::array<int16_t, BUF_LEN>, BUF_CNT> buffers;
 };

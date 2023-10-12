@@ -2,10 +2,7 @@
 
 // SETTINGS
 
-#define HTTP_MEM (32 * 1024)
 
-#define HTTP_PRT (configMAX_PRIORITIES * 3 / 4)
-#define ADC_PRT (configMAX_PRIORITIES - 1)
 
 //
 

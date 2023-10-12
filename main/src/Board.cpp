@@ -34,14 +34,7 @@ Board::Board() : expander_a(I2C_NUM_0, 0b000),
 	adc.acquire_spi();
 	dac.acquire_spi();
 
-	dac.write_trx(trx_out[0], (MCP4922::max + 1) / 2);
-	dac.write_trx(trx_out[1], (MCP4922::max + 1) / 2);
-	dac.send_trx(trx_out[0]);
-	dac.recv_trx();
-	dac.send_trx(trx_out[1]);
-	dac.recv_trx();
-
-	// setup output
+	reset_outputs();
 
 	ESP_LOGI(TAG, "Constructed!");
 }
@@ -64,14 +57,10 @@ esp_err_t Board::set_input_ranges(In_Range r1, In_Range r2, In_Range r3, In_Rang
 
 	esp_err_t ret = ESP_OK;
 
-	if (r1 != In_Range::Keep)
-		range_in[0] = r1;
-	if (r2 != In_Range::Keep)
-		range_in[1] = r2;
-	if (r3 != In_Range::Keep)
-		range_in[2] = r3;
-	if (r4 != In_Range::Keep)
-		range_in[3] = r4;
+	range_in[0] = r1;
+	range_in[1] = r2;
+	range_in[2] = r3;
+	range_in[3] = r4;
 
 	uint8_t lower = steering[static_cast<uint8_t>(range_in[0])] | steering[static_cast<uint8_t>(range_in[1])] << 4;
 	uint8_t upper = steering[static_cast<uint8_t>(range_in[2])] | steering[static_cast<uint8_t>(range_in[3])] << 4;
@@ -100,23 +89,6 @@ err:
 	return ret;
 }
 
-esp_err_t Board::set_input_range(Input in, In_Range range)
-{
-	switch (in)
-	{
-	case Input::In1:
-		return set_input_ranges(range, In_Range::Keep, In_Range::Keep, In_Range::Keep);
-	case Input::In2:
-		return set_input_ranges(In_Range::Keep, range, In_Range::Keep, In_Range::Keep);
-	case Input::In3:
-		return set_input_ranges(In_Range::Keep, In_Range::Keep, range, In_Range::Keep);
-	case Input::In4:
-		return set_input_ranges(In_Range::Keep, In_Range::Keep, In_Range::Keep, range);
-	default:
-		return ESP_ERR_INVALID_ARG;
-	}
-}
-
 const Board::ExecCfg &Board::validate_configs(GeneralCfg &&g, TriggerCfg &&t, InputCfg &&i, OutputCfg &&o)
 {
 	general = std::move(g);
@@ -137,8 +109,6 @@ const Board::ExecCfg &Board::validate_configs(GeneralCfg &&g, TriggerCfg &&t, In
 
 	if (input.port_order.empty())
 		e.do_inp = false;
-	if (input.callback == nullptr)
-		e.do_inp = false;
 	if (input.repeats == 0)
 		e.do_inp = false;
 
@@ -150,7 +120,7 @@ const Board::ExecCfg &Board::validate_configs(GeneralCfg &&g, TriggerCfg &&t, In
 	return exec;
 }
 
-esp_err_t Board::execute(void *ctx)
+esp_err_t Board::execute(WriteCb &&callback)
 {
 	spi_transaction_t *trx1 = nullptr;
 	spi_transaction_t *trx2 = nullptr;
@@ -199,8 +169,8 @@ esp_err_t Board::execute(void *ctx)
 
 	//
 
-	size_t buf_pos = 0;
-	size_t buf_idx = 0;
+	// size_t buf_pos = 0;
+	// size_t buf_idx = 0;
 
 	size_t in_idx = 0;
 	size_t rpt = 0;
@@ -208,7 +178,8 @@ esp_err_t Board::execute(void *ctx)
 	Input in = Input::None;
 	spi_transaction_t *trxin = nullptr;
 
-	for (size_t iter = 0; iter < general.sample_count; ++iter)
+	size_t iter = 0;
+	while (iter < general.sample_count)
 	{
 		while ((now = esp_timer_get_time()) < next)
 			NOOP;
@@ -245,15 +216,12 @@ esp_err_t Board::execute(void *ctx)
 		if (exec.do_inp)
 		{
 			adc.recv_trx();
-			buffers[buf_idx][buf_pos] = conv_meas(adc.parse_trx(*trxin));
 
-			if (++buf_pos == BUF_LEN)
-			{
-				input.callback(buffers[buf_idx].data(), BUF_LEN, ctx);
-				buf_pos = 0;
-				if (++buf_idx == BUF_CNT)
-					buf_idx = 0;
-			}
+			int16_t res = conv_meas(adc.parse_trx(*trxin));
+			bool ok = callback(res);
+
+			if (!ok)
+				goto exit;
 
 			if (++rpt == input.repeats)
 			{
@@ -262,10 +230,22 @@ esp_err_t Board::execute(void *ctx)
 					in_idx = 0;
 			}
 		}
+		++iter;
 	}
 
-	if (buf_pos)
-		input.callback(buffers[buf_idx].data(), buf_pos, ctx);
+	// if (buf_pos)
+	// 	input.callback(buffers[buf_idx].data(), buf_pos, ctx);
+
+exit:
+
+	if (exec.do_out)
+	{
+		while ((now = esp_timer_get_time()) < next)
+			NOOP;
+		reset_outputs();
+	}
+
+	ESP_LOGI(TAG, "Operation: %d cycles, took %d us, equals %f us/c", int(iter), int(next - start), float(next - start) / iter);
 
 	return ESP_OK;
 }
@@ -280,12 +260,22 @@ In_Range Board::range_decode(std::string s)
 	if (s == "MIN")
 		return In_Range::Min;
 	if (s == "MID")
-		return In_Range::Mid;
+		return In_Range::Med;
 	if (s == "MAX")
 		return In_Range::Max;
 	return In_Range::OFF;
 }
 //*/
+
+void Board::reset_outputs()
+{
+	dac.write_trx(trx_out[0], (MCP4922::max + 1) / 2);
+	dac.write_trx(trx_out[1], (MCP4922::max + 1) / 2);
+	dac.send_trx(trx_out[0]);
+	dac.recv_trx();
+	dac.send_trx(trx_out[1]);
+	dac.recv_trx();
+}
 
 void Board::test()
 {
@@ -314,6 +304,29 @@ void Board::test()
 }
 
 //
+
+float Board::input_multiplier(Input in) const
+{
+	constexpr float volt_mul[4] = {0, 1, 10, 100};	  // min range => min attn
+	constexpr float curr_mul[4] = {5, 1000, 100, 10}; // min range => max gain
+
+	constexpr float volt_ratio = 1.0f / std::numeric_limits<int16_t>::max() * v_ref;
+	constexpr float curr_ratio = 1.0f / std::numeric_limits<int16_t>::max() * v_ref * 1000;
+
+	switch (in)
+	{
+	case Input::In1:
+		return volt_ratio * volt_mul[static_cast<uint8_t>(range_in[0])];
+	case Input::In2:
+		return volt_ratio * volt_mul[static_cast<uint8_t>(range_in[1])];
+	case Input::In3:
+		return volt_ratio * volt_mul[static_cast<uint8_t>(range_in[2])];
+	case Input::In4:
+		return curr_ratio / curr_mul[static_cast<uint8_t>(range_in[3])];
+	default:
+		return 0;
+	}
+}
 
 inline int16_t Board::conv_meas(MCP3204::out_t in)
 {
