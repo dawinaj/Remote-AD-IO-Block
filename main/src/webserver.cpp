@@ -15,9 +15,9 @@
 
 // #include <esp_http_server.h>
 
-#define FOLLY_NO_CONFIG
-#include "folly/ProducerConsumerQueue.h"
-using folly::ProducerConsumerQueue;
+// #define FOLLY_NO_CONFIG
+// #include "folly/ProducerConsumerQueue.h"
+// using folly::ProducerConsumerQueue;
 
 #include "rigtorp/SPSCQueue.h"
 using namespace rigtorp;
@@ -413,30 +413,30 @@ static esp_err_t io_handler(httpd_req_t *req)
 
 	ESP_LOGI(TAG, "Preparing queue...");
 
-	constexpr size_t BUF_LEN = 4096;
+	constexpr size_t BUF_LEN = 1024;
 
-	auto *queue = new SPSCQueue<int16_t>(BUF_LEN * 8 - 1);
+	SPSCQueue<int16_t> queue(BUF_LEN * 32 - 1);
 
-	auto send_measurements = [req, queue](size_t len)
+	auto send_measurements = [req, &queue](size_t len) -> esp_err_t
 	{
-		ESP_LOGI(TAG, "Sending %zu measurements... Approx size %zu", len, queue->size());
-		const char *str = reinterpret_cast<const char *>(queue->front());
-		httpd_resp_send_chunk(req, str, len * sizeof(int16_t));
+		ESP_LOGI(TAG, "Sending %zu measurements... Approx size %zu", len, queue.size());
+		const char *str = reinterpret_cast<const char *>(queue.front());
+		esp_err_t ret = httpd_resp_send_chunk(req, str, len * sizeof(int16_t));
 		while (len--)
-			queue->pop();
+			queue.pop();
+		return ret;
 	};
 
 	ESP_LOGI(TAG, "Spawning task...");
 
 	TaskHandle_t io_hdl = nullptr;
-	xTaskCreatePinnedToCore(board_io_task, "BoardTask", BOARD_MEM, static_cast<void *>(queue), BOARD_PRT, &io_hdl, CPU1);
+	xTaskCreatePinnedToCore(board_io_task, "BoardTask", BOARD_MEM, static_cast<void *>(&queue), BOARD_PRT, &io_hdl, CPU1);
 
 	ESP_LOGI(TAG, "Running consumer...");
 
 	do
 	{
-
-		if (queue->size() >= BUF_LEN)
+		if (queue.size() >= BUF_LEN)
 			send_measurements(BUF_LEN);
 		else
 			vTaskDelay(1);
@@ -445,9 +445,9 @@ static esp_err_t io_handler(httpd_req_t *req)
 
 	vTaskResume(io_hdl); // resumes to delete itself
 
-	while (!queue->empty())
+	while (!queue.empty())
 	{
-		send_measurements(std::min(queue->size(), BUF_LEN));
+		send_measurements(std::min(queue.size(), BUF_LEN));
 		vTaskDelay(1);
 	}
 

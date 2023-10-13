@@ -1,7 +1,7 @@
 
 #include <esp_http_server.h>
 
-#define HTTP_MEM (32 * 1024)
+#define HTTP_MEM (16 * 1024)
 #define BOARD_MEM (4 * 1024)
 
 #define HTTP_PRT (configMAX_PRIORITIES / 2)
