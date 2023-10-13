@@ -19,6 +19,9 @@
 #include "folly/ProducerConsumerQueue.h"
 using folly::ProducerConsumerQueue;
 
+#include "rigtorp/SPSCQueue.h"
+using namespace rigtorp;
+
 #include "json_helper.h"
 
 //
@@ -389,11 +392,11 @@ static esp_err_t settings_handler(httpd_req_t *req)
 void board_io_task(void *arg)
 {
 	{
-		auto *queue = static_cast<ProducerConsumerQueue<int16_t> *>(arg);
+		auto *queue = static_cast<SPSCQueue<int16_t> *>(arg);
 
 		auto writefcn = [queue](int16_t in) -> bool
 		{
-			return queue->write(in);
+			return queue->try_push(in);
 		};
 
 		board->execute(std::move(writefcn));
@@ -412,15 +415,15 @@ static esp_err_t io_handler(httpd_req_t *req)
 
 	constexpr size_t BUF_LEN = 4096;
 
-	auto *queue = new ProducerConsumerQueue<int16_t>(BUF_LEN * 8);
+	auto *queue = new SPSCQueue<int16_t>(BUF_LEN * 8 - 1);
 
 	auto send_measurements = [req, queue](size_t len)
 	{
-		ESP_LOGI(TAG, "Sending %zu measurements... Approx size %zu", len, queue->sizeGuess());
-		const char *str = reinterpret_cast<const char *>(queue->frontPtr());
+		ESP_LOGI(TAG, "Sending %zu measurements... Approx size %zu", len, queue->size());
+		const char *str = reinterpret_cast<const char *>(queue->front());
 		httpd_resp_send_chunk(req, str, len * sizeof(int16_t));
 		while (len--)
-			queue->popFront();
+			queue->pop();
 	};
 
 	ESP_LOGI(TAG, "Spawning task...");
@@ -433,7 +436,7 @@ static esp_err_t io_handler(httpd_req_t *req)
 	do
 	{
 
-		if (queue->sizeGuess() >= BUF_LEN)
+		if (queue->size() >= BUF_LEN)
 			send_measurements(BUF_LEN);
 		else
 			vTaskDelay(1);
@@ -442,9 +445,9 @@ static esp_err_t io_handler(httpd_req_t *req)
 
 	vTaskResume(io_hdl); // resumes to delete itself
 
-	while (!queue->isEmpty())
+	while (!queue->empty())
 	{
-		send_measurements(std::min(queue->sizeGuess(), BUF_LEN));
+		send_measurements(std::min(queue->size(), BUF_LEN));
 		vTaskDelay(1);
 	}
 
