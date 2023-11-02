@@ -139,16 +139,13 @@ public:
 		return ret;
 	}
 
-	inline esp_err_t recv_trx()
+	inline esp_err_t recv_trx(TickType_t timeout = portMAX_DELAY)
 	{
-		esp_err_t ret = ESP_OK;
+		esp_err_t ret = spi_device_polling_end(spi_hdl, timeout);
 
-		ESP_GOTO_ON_ERROR(
-			spi_device_polling_end(spi_hdl, portMAX_DELAY),
-			err, TAG, "Error in spi_device_polling_end()");
+		if (ret == ESP_OK || ret == ESP_ERR_TIMEOUT) [[likely]]
+			return ret;
 
-		return ESP_OK;
-	err:
 		ESP_LOGE(TAG, "Error in recv_trx(): %s", esp_err_to_name(ret));
 		return ret;
 	}

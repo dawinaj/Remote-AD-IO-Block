@@ -64,6 +64,9 @@ public:
 
 	const ExecCfg &validate_configs(GeneralCfg &&, TriggerCfg &&, InputCfg &&, OutputCfg &&);
 
+	int16_t read_digital() const;
+	void write_digital(bool, bool, bool, bool) const;
+
 private:
 	void reset_outputs();
 
@@ -86,8 +89,10 @@ public:
 	struct ExecCfg
 	{
 		bool do_trg = false;
-		bool do_inp = false;
-		bool do_out = false;
+		bool do_anlg_inp = false;
+		bool do_anlg_out = false;
+		bool do_dgtl_inp = false;
+		bool do_dgtl_out = false;
 	};
 
 	struct GeneralCfg
@@ -107,6 +112,7 @@ public:
 	{
 		std::vector<Input> port_order;
 		uint32_t repeats = 1;
+		bool do_digital = true;
 	};
 
 	struct OutputCfg
@@ -114,6 +120,7 @@ public:
 		Generator voltage_gen;
 		Generator current_gen;
 		bool reverse_order = false;
+		std::vector<uint32_t> dig_delays[4];
 	};
 
 private:
@@ -133,5 +140,6 @@ private:
 	spi_transaction_t trx_in[4];
 	spi_transaction_t trx_out[2];
 
-	// std::array<std::array<int16_t, BUF_LEN>, BUF_CNT> buffers;
+	const gpio_num_t dig_in[4] = {GPIO_NUM_34, GPIO_NUM_35, GPIO_NUM_36, GPIO_NUM_39};
+	const gpio_num_t dig_out[4] = {GPIO_NUM_4, GPIO_NUM_25, GPIO_NUM_26, GPIO_NUM_27};
 };

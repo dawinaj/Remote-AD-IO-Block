@@ -9,6 +9,8 @@
 #include <memory> // move
 #include <type_traits>
 
+using namespace std::literals;
+
 #include <esp_event.h>
 #include <esp_log.h>
 #include <esp_system.h>
@@ -227,7 +229,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 						if (!str.empty())
 							for (char c : str)
 							{
-								if (c >= '1' && c <= '4')
+								if (c >= '0' && c <= '4')
 									input.port_order.push_back(static_cast<Input>(c - '0'));
 								else
 								{
@@ -247,6 +249,14 @@ static esp_err_t settings_handler(httpd_req_t *req)
 							input.repeats = j.at("period_us").get<uint32_t>();
 						else
 							errors.push_back("input.repeats is invalid!");
+					}
+
+					if (j.contains("do_digital"))
+					{
+						if (j.at("do_digital").is_boolean())
+							input.do_digital = j.at("do_digital").get<bool>();
+						else
+							errors.push_back("input.do_digital is invalid!");
 					}
 				}
 				else
@@ -299,6 +309,55 @@ static esp_err_t settings_handler(httpd_req_t *req)
 							output.reverse_order = j.at("reverse_order").get<bool>();
 						else
 							errors.push_back("output.reverse_order is invalid!");
+					}
+
+					if (j.contains("digital_delays"))
+					{
+						if (j.at("digital_delays").is_object())
+						{
+							const json &d = j.at("digital_delays");
+
+							// for (size_t i = 0; i < 4; ++i)
+							// {
+							// 	std::string key = std::to_string(i + 1);
+							// 	if (d.contains(key))
+							// 	{
+							// 		if (d.at(key).is_array())
+							// 		{
+							// 			for (const auto &el : d.at(key).items())
+							// 			{
+							// 				if (el.value().is_number_unsigned())
+							// 					output.dig_delays[i].push_back(el.value().get<uint32_t>());
+							// 				else
+							// 				{
+							// 					output.dig_delays[i].clear();
+							// 					errors.push_back("output.digital_delays."s + key + " failed to parse!");
+							// 					break;
+							// 				}
+							// 			}
+							// 		}
+							// 		else
+							// 			errors.push_back("output.digital_delays."s + key + " is invalid!");
+							// 	}
+							// }
+							for (size_t i = 0; i < 4; ++i)
+							{
+								std::string key = std::to_string(i + 1);
+								if (d.contains(key))
+								{
+									try
+									{
+										output.dig_delays[i] = d.at(key).get<std::vector<uint32_t>>();
+									}
+									catch (json::exception &e)
+									{
+										errors.push_back("output.digital_delays."s + key + " failed to parse!");
+									}
+								}
+							}
+						}
+						else
+							errors.push_back("output.digital_delays is invalid!");
 					}
 				}
 				else
@@ -371,8 +430,10 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	ordered_json res = create_ok_response();
 	res["message"] = "Settings have been validated. Execution plan: ${data.exec}. Measurement multipliers: ${data.mult}. Units: ${data.unit}";
 	res["data"]["exec"]["do_trigger"] = exec.do_trg;
-	res["data"]["exec"]["do_input"] = exec.do_inp;
-	res["data"]["exec"]["do_output"] = exec.do_out;
+	res["data"]["exec"]["do_analog_input"] = exec.do_anlg_inp;
+	res["data"]["exec"]["do_analog_output"] = exec.do_anlg_out;
+	res["data"]["exec"]["do_digital_input"] = exec.do_dgtl_inp;
+	res["data"]["exec"]["do_digital_output"] = exec.do_dgtl_out;
 	res["data"]["mult"]["in1"] = board->input_multiplier(Input::In1);
 	res["data"]["mult"]["in2"] = board->input_multiplier(Input::In2);
 	res["data"]["mult"]["in3"] = board->input_multiplier(Input::In3);

@@ -8,6 +8,8 @@
 
 #include <esp_timer.h>
 
+#include <soc/gpio_reg.h>
+
 #define NOOP __asm__ __volatile__("nop")
 
 Board::Board() : expander_a(I2C_NUM_0, 0b000),
@@ -15,21 +17,27 @@ Board::Board() : expander_a(I2C_NUM_0, 0b000),
 				 adc(SPI3_HOST, GPIO_NUM_5, 2'000'000),
 				 dac(SPI2_HOST, GPIO_NUM_15, 20'000'000)
 {
-	expander_a.set_pins(0x00);
-	expander_b.set_pins(0x00);
+	// setup
 
-	range_in[0] = In_Range::OFF;
-	range_in[1] = In_Range::OFF;
-	range_in[2] = In_Range::OFF;
-	range_in[3] = In_Range::OFF;
+	for (size_t i = 0; i < 4; ++i)
+		range_in[i] = In_Range::OFF;
 
-	trx_in[0] = adc.make_trx(0);
-	trx_in[1] = adc.make_trx(1);
-	trx_in[2] = adc.make_trx(2);
-	trx_in[3] = adc.make_trx(3);
+	for (size_t i = 0; i < 4; ++i)
+		trx_in[i] = adc.make_trx(i);
 
 	trx_out[0] = dac.make_trx(1);
 	trx_out[1] = dac.make_trx(0);
+
+	for (size_t i = 0; i < 4; ++i)
+		gpio_set_direction(dig_in[i], GPIO_MODE_INPUT);
+
+	for (size_t i = 0; i < 4; ++i)
+		gpio_set_direction(dig_out[i], GPIO_MODE_OUTPUT);
+
+	// execute
+
+	expander_a.set_pins(0x00);
+	expander_b.set_pins(0x00);
 
 	adc.acquire_spi();
 	dac.acquire_spi();
@@ -98,8 +106,10 @@ const Board::ExecCfg &Board::validate_configs(GeneralCfg &&g, TriggerCfg &&t, In
 
 	ExecCfg e = {
 		.do_trg = true,
-		.do_inp = true,
-		.do_out = true,
+		.do_anlg_inp = true,
+		.do_anlg_out = true,
+		.do_dgtl_inp = true,
+		.do_dgtl_out = true,
 	};
 
 	if (trigger.port == Input::None)
@@ -108,18 +118,38 @@ const Board::ExecCfg &Board::validate_configs(GeneralCfg &&g, TriggerCfg &&t, In
 		e.do_trg = false;
 
 	if (input.port_order.empty())
-		e.do_inp = false;
+		e.do_anlg_inp = false;
 	if (input.repeats == 0)
-		e.do_inp = false;
+		e.do_anlg_inp = false;
 
-	if (output.voltage_gen.empty() && output.current_gen.empty())
-		e.do_out = false;
+	if (input.do_digital == false)
+		e.do_dgtl_inp = false;
+
+	e.do_anlg_out = false;
+	if (!output.voltage_gen.empty())
+		e.do_anlg_out = true;
+	if (!output.current_gen.empty())
+		e.do_anlg_out = true;
+
+	e.do_dgtl_out = false;
+	for (size_t i = 0; i < 4; ++i)
+		if (!output.dig_delays[i].empty())
+			e.do_dgtl_out = true;
 
 	exec = e;
 
 	return exec;
 }
 
+// general execution plan:
+// wait for trigger
+// in loop:
+// send input
+// read dig in
+// write output
+// write output
+// write dig out
+// recv input
 esp_err_t Board::execute(WriteCb &&callback)
 {
 	spi_transaction_t *trx1 = nullptr;
@@ -127,22 +157,19 @@ esp_err_t Board::execute(WriteCb &&callback)
 	Generator *gen1 = nullptr;
 	Generator *gen2 = nullptr;
 
-	if (exec.do_out)
+	if (!output.reverse_order)
 	{
-		if (!output.reverse_order)
-		{
-			trx1 = &trx_out[0];
-			trx2 = &trx_out[1];
-			gen1 = &output.voltage_gen;
-			gen2 = &output.current_gen;
-		}
-		else
-		{
-			trx1 = &trx_out[1];
-			trx2 = &trx_out[0];
-			gen1 = &output.current_gen;
-			gen2 = &output.voltage_gen;
-		}
+		trx1 = &trx_out[0];
+		trx2 = &trx_out[1];
+		gen1 = &output.voltage_gen;
+		gen2 = &output.current_gen;
+	}
+	else
+	{
+		trx1 = &trx_out[1];
+		trx2 = &trx_out[0];
+		gen1 = &output.current_gen;
+		gen2 = &output.voltage_gen;
 	}
 
 	//
@@ -169,67 +196,104 @@ esp_err_t Board::execute(WriteCb &&callback)
 
 	//
 
-	// size_t buf_pos = 0;
-	// size_t buf_idx = 0;
-
 	size_t in_idx = 0;
 	size_t rpt = 0;
 
 	Input in = Input::None;
 	spi_transaction_t *trxin = nullptr;
 
+	start = next; // reset deltatime
+
+	float gen1_val = gen1->get(0);
+	float gen2_val = gen2->get(0);
+
+	bool dig_out[4] = {true, true, true, true};
+	int64_t dig_next[4] = {start, start, start, start};
+	size_t dig_idx[4] = {0, 0, 0, 0};
+
 	size_t iter = 0;
 	while (iter < general.sample_count)
 	{
+		// setup
+
+		int16_t meas = 0;
+
+		if (exec.do_anlg_inp)
+			in = input.port_order[in_idx];
+
+		if (exec.do_dgtl_out)
+			for (size_t i = 0; i < 4; ++i)
+				if (!output.dig_delays[i].empty())
+				{
+					while (now >= dig_next[i])
+					{
+						dig_out[i] = !dig_out[i];
+						dig_next[i] += output.dig_delays[i][dig_idx[i]];
+						if (++dig_idx[i] == output.dig_delays[i].size())
+							dig_idx[i] = 0;
+					}
+				}
+
+		// wait for synchronisation
+
 		while ((now = esp_timer_get_time()) < next)
 			NOOP;
 		next = now + general.period_us;
 
-		if (exec.do_inp)
-		{
-			in = input.port_order[in_idx];
+		// lessago
 
+		if (in != Input::None)
+		{
 			trxin = &trx_in[static_cast<uint8_t>(in) - 1];
 			adc.send_trx(*trxin);
 		}
 
-		if (exec.do_out)
+		if (exec.do_dgtl_inp)
+			meas = read_digital();
+
+		if (exec.do_dgtl_out)
+			write_digital(dig_out[0], dig_out[1], dig_out[2], dig_out[3]);
+
+		if (exec.do_anlg_out)
 		{
-			if (gen1 != nullptr)
+			if (!gen1->empty())
 			{
-				float volt = gen1->get(now - start);
-				MCP4922::in_t code = conv_gen(volt_to_generated(volt));
-				dac.write_trx(*trx1, code);
+				dac.write_trx(*trx1, conv_gen(volt_to_generated(gen1_val)));
 				dac.send_trx(*trx1);
+				gen1_val = gen1->get(next - start);
 				dac.recv_trx();
 			}
-			if (gen2 != nullptr)
+			if (!gen2->empty())
 			{
-				float volt = gen2->get(now - start);
-				MCP4922::in_t code = conv_gen(volt_to_generated(volt));
-				dac.write_trx(*trx2, code);
+				dac.write_trx(*trx2, conv_gen(volt_to_generated(gen2_val)));
 				dac.send_trx(*trx2);
+				gen2_val = gen2->get(next - start);
 				dac.recv_trx();
 			}
 		}
 
-		if (exec.do_inp)
+		if (in != Input::None)
 		{
 			adc.recv_trx();
+			meas |= conv_meas(adc.parse_trx(*trxin));
+		}
 
-			int16_t res = conv_meas(adc.parse_trx(*trxin));
-			bool ok = callback(res);
+		if (exec.do_dgtl_inp || exec.do_anlg_inp)
+		{
+			bool ok = callback(meas);
 
 			if (!ok)
 				goto exit;
+		}
 
+		if (exec.do_anlg_inp)
 			if (++rpt == input.repeats)
 			{
 				rpt = 0;
 				if (++in_idx == input.port_order.size())
 					in_idx = 0;
 			}
-		}
+
 		++iter;
 	}
 
@@ -238,12 +302,11 @@ esp_err_t Board::execute(WriteCb &&callback)
 
 exit:
 
-	if (exec.do_out)
-	{
-		while ((now = esp_timer_get_time()) < next)
-			NOOP;
-		reset_outputs();
-	}
+	while ((now = esp_timer_get_time()) < next)
+		NOOP;
+
+	write_digital(false, false, false, false);
+	reset_outputs();
 
 	ESP_LOGI(TAG, "Operation: %d cycles, took %d us, equals %f us/c", int(iter), int(next - start), float(next - start) / iter);
 
@@ -275,6 +338,26 @@ void Board::reset_outputs()
 	dac.recv_trx();
 	dac.send_trx(trx_out[1]);
 	dac.recv_trx();
+}
+
+int16_t Board::read_digital() const
+{
+	static const uint32_t masks[4] = {BIT(dig_in[0] - 32), BIT(dig_in[1] - 32), BIT(dig_in[2] - 32), BIT(dig_in[3] - 32)};
+
+	uint32_t pins = REG_READ(GPIO_IN1_REG);
+
+	return (!!(pins & masks[0]) << 0) | (!!(pins & masks[1]) << 1) | (!!(pins & masks[2]) << 2) | (!!(pins & masks[3]) << 3);
+}
+
+void Board::write_digital(bool o0, bool o1, bool o2, bool o3) const
+{
+	static const uint32_t masks[4] = {BIT(dig_out[0]), BIT(dig_out[1]), BIT(dig_out[2]), BIT(dig_out[3])};
+
+	uint32_t sets = (o0 ? masks[0] : 0) | (o1 ? masks[1] : 0) | (o2 ? masks[2] : 0) | (o3 ? masks[3] : 0);
+	uint32_t rsts = (!o0 ? masks[0] : 0) | (!o1 ? masks[1] : 0) | (!o2 ? masks[2] : 0) | (!o3 ? masks[3] : 0);
+
+	REG_WRITE(GPIO_OUT_W1TS_REG, sets);
+	REG_WRITE(GPIO_OUT_W1TC_REG, rsts);
 }
 
 void Board::test()
@@ -310,8 +393,8 @@ float Board::input_multiplier(Input in) const
 	constexpr float volt_mul[4] = {0, 1, 10, 100};	  // min range => min attn
 	constexpr float curr_mul[4] = {5, 1000, 100, 10}; // min range => max gain
 
-	constexpr float volt_ratio = 1.0f / std::numeric_limits<int16_t>::max() * v_ref;
-	constexpr float curr_ratio = 1.0f / std::numeric_limits<int16_t>::max() * v_ref * 1000;
+	constexpr float volt_ratio = 1.0f / (std::numeric_limits<int16_t>::max() >> 4 << 4) * v_ref;
+	constexpr float curr_ratio = 1.0f / (std::numeric_limits<int16_t>::max() >> 4 << 4) * v_ref * 1000;
 
 	switch (in)
 	{

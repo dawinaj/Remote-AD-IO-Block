@@ -142,6 +142,27 @@ extern "C" void app_main(void)
 	board->dac.recv_trx();
 	//*/
 
+	/*/
+	ESP_LOGI(TAG, "Starting testing digital inputs");
+	while (true)
+	{
+		int16_t val = board->read_digital();
+		ESP_LOGI(TAG, "Code: " BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(val));
+		vTaskDelay(pdMS_TO_TICKS(300));
+	}
+	//*/
+
+	/*/
+	ESP_LOGI(TAG, "Starting testing digital outputs");
+	for (size_t i = 0; true; ++i)
+	{
+		board->write_digital(i & 1, i & 2, i & 4, i & 8);
+		vTaskDelay(pdMS_TO_TICKS(1000));
+	}
+	//*/
+
+	//return;
+
 	httpd_handle_t server = start_webserver();
 
 	(void)server;
@@ -152,5 +173,6 @@ extern "C" void app_main(void)
 		vTaskDelay(pdMS_TO_TICKS(20000));
 	}
 
-	vTaskSuspend(NULL);
+	// vTaskDelete(NULL);
+	return;
 }
