@@ -97,7 +97,7 @@ err:
 	return ret;
 }
 
-const Board::ExecCfg &Board::validate_configs(GeneralCfg &&g, TriggerCfg &&t, InputCfg &&i, OutputCfg &&o)
+const Board::ExecCfg &Board::validate_configs(GeneralCfg &&g, TriggerCfg &&t, InputCfg &&i, OutputCfg &&o) // all shit
 {
 	general = std::move(g);
 	trigger = std::move(t);
