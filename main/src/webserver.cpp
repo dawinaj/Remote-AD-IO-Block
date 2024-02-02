@@ -17,12 +17,11 @@ using namespace std::literals;
 
 // #include <esp_http_server.h>
 
-// #define FOLLY_NO_CONFIG
-// #include "folly/ProducerConsumerQueue.h"
-// using folly::ProducerConsumerQueue;
-
 #include "rigtorp/SPSCQueue.h"
 using namespace rigtorp;
+
+#include "Interpreter.h"
+using namespace Executing;
 
 #include "json_helper.h"
 
@@ -54,65 +53,7 @@ void str_to_lower(std::string &s)
 				   { return std::tolower(c); });
 }
 
-/*/
-std::string get_query(httpd_req_t *r)
-{
-	// size_t qr_len = httpd_req_get_url_query_len(r) + 1;
-	// std::string qr(qr_len, '\0');
-	// httpd_req_get_url_query_str(r, qr.data(), qr_len);
-	// qr.erase(qr.find('\0'));
-	size_t qr_len = httpd_req_get_url_query_len(r);
-	std::string qr(qr_len, '\0');
-	httpd_req_get_url_query_str(r, qr.data(), qr_len + 1);
-	return qr;
-}
-
-auto parse_query(httpd_req_t *r)
-{
-	std::map<std::string, std::string> ret;
-	size_t qr_len = httpd_req_get_url_query_len(r) + 1;
-	std::string query(qr_len, '\0');
-	httpd_req_get_url_query_str(r, query.data(), qr_len);
-	query.erase(query.find('\0'));
-
-	size_t pos = 0;
-	do
-	{
-		size_t maxlen = query.find('&', pos); // find end of current param
-		if (maxlen == std::string::npos)
-			maxlen = query.length();
-
-		size_t middle = query.find('=', pos); // find break of current param
-
-		if (middle > maxlen) // no value, key only
-		{
-			std::string key = query.substr(pos, maxlen - pos);
-			ret.emplace(std::move(key), "");
-		}
-		else // key and value
-		{
-			std::string key = query.substr(pos, middle - pos);
-			std::string val = query.substr(middle + 1, maxlen - middle - 1);
-			ret.emplace(std::move(key), std::move(val));
-		}
-		pos = maxlen + 1;
-	} //
-	while (pos <= query.length());
-
-	// ret.erase("");
-
-	return ret;
-}
-
-template <typename T, std::enable_if_t<std::is_unsigned<T>::value, bool> = true>
-void string_to_uint(const std::string &str, T &ref)
-{
-	char *p;
-	unsigned long long conv = std::strtoull(str.c_str(), &p, 10);
-	if (*p == '\0')
-		ref = conv;
-}
-//*/
+//
 
 static esp_err_t welcome_handler(httpd_req_t *req)
 {

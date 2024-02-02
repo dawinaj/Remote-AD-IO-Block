@@ -6,6 +6,7 @@ idf_component_register(
 	"src/webserver.cpp"
 	"src/json_helper.cpp"
 	"src/Board.cpp"
+	"src/Interpreter.cpp"
 	INCLUDE_DIRS
 	"."
 	"include/"
