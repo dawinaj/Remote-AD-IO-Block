@@ -32,7 +32,7 @@ namespace Executing
 		uint8_t port = 0;
 		union
 		{
-			uint32_t i = 0;
+			uint32_t u = 0;
 			float f;
 		} arg;
 

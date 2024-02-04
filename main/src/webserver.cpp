@@ -85,14 +85,6 @@ static esp_err_t settings_handler(httpd_req_t *req)
 
 	ESP_LOGV(TAG, "%s", post.c_str());
 
-	//
-
-	Board::GeneralCfg general;
-	Board::TriggerCfg trigger;
-	Board::InputCfg input;
-	Board::OutputCfg output;
-	In_Range range[4] = {In_Range::OFF, In_Range::OFF, In_Range::OFF, In_Range::OFF};
-
 	std::vector<std::string> errors;
 
 	if (str_is_ascii(post))
@@ -100,247 +92,30 @@ static esp_err_t settings_handler(httpd_req_t *req)
 		const json q = json::parse(post, nullptr, false);
 		if (!q.is_discarded())
 		{
-			if (q.contains("general"))
+			if (q.contains("program") && q.at("program").is_string())
 			{
-				const json &j = q.at("general");
-				if (j.is_object())
-				{
-					if (j.contains("sample_count") && j.at("sample_count").is_number_unsigned())
-						general.sample_count = j.at("sample_count").get<uint32_t>();
-					else
-						errors.push_back("general.sample_count is invalid!");
-
-					if (j.contains("period_us") && j.at("period_us").is_number_unsigned())
-						general.period_us = j.at("period_us").get<uint32_t>();
-					else
-						errors.push_back("general.period_us is invalid!");
-				}
-				else
-					errors.push_back("general is not an object!");
-			}
-			else
-				errors.push_back("general not given!");
-
-			if (q.contains("trigger"))
-			{
-				const json &j = q.at("trigger");
-				if (j.is_object())
-				{
-					if (j.contains("port"))
-					{
-						if (j.at("port").is_string())
-						{
-							const std::string &str = j.at("port").get_ref<const json::string_t &>();
-							if (str.length() == 1)
-							{
-								if (str[0] >= '1' && str[0] <= '4')
-									trigger.port = static_cast<Input>(str[0] - '0');
-								else
-									errors.push_back("trigger.port is invalid!");
-							}
-							else
-								errors.push_back("trigger.port is invalid!");
-						}
-						else if (j.at("port").is_number_unsigned())
-						{
-							size_t prt = j.at("port").get<size_t>();
-							if (prt >= 1 && prt <= 4)
-								trigger.port = static_cast<Input>(prt);
-							else
-								errors.push_back("trigger.port is invalid!");
-						}
-						else
-							errors.push_back("trigger.port is invalid!");
-					}
-					else
-						errors.push_back("trigger.port is invalid!");
-				}
-				else
-					errors.push_back("trigger is not an object!");
+				// parse program
 			}
 
-			if (q.contains("input"))
+			if (q.contains("generators") && q.at("generators").is_array())
 			{
-				const json &j = q.at("input");
-				if (j.is_object())
-				{
-					if (j.contains("port_order") && j.at("port_order").is_string())
-					{
-						const std::string &str = j.at("port_order").get_ref<const json::string_t &>();
-						if (!str.empty())
-							for (char c : str)
-							{
-								if (c >= '0' && c <= '4')
-									input.port_order.push_back(static_cast<Input>(c - '0'));
-								else
-								{
-									errors.push_back("input.port_order is invalid!");
-									break;
-								}
-							}
-						else
-							errors.push_back("input.port_order is invalid!");
-					}
-					else
-						errors.push_back("input.port_order is invalid!");
+				// parse generators
+				size_t count = q.at("generators").size();
+				count = std::min(count, 16);
 
-					if (j.contains("repeats"))
+				while (count--)
+					if (j.at("voltage_gen").is_array())
 					{
-						if (j.at("repeats").is_number_unsigned())
-							input.repeats = j.at("period_us").get<uint32_t>();
-						else
-							errors.push_back("input.repeats is invalid!");
-					}
-
-					if (j.contains("do_digital"))
-					{
-						if (j.at("do_digital").is_boolean())
-							input.do_digital = j.at("do_digital").get<bool>();
-						else
-							errors.push_back("input.do_digital is invalid!");
-					}
-				}
-				else
-					errors.push_back("input is not an object!");
-			}
-
-			if (q.contains("output"))
-			{
-				const json &j = q.at("output");
-				if (j.is_object())
-				{
-					if (j.contains("voltage_gen"))
-					{
-						if (j.at("voltage_gen").is_array())
+						try
 						{
-							try
-							{
-								output.voltage_gen = j.at("voltage_gen").get<Generator>();
-							}
-							catch (json::exception &e)
-							{
-								errors.push_back("output.voltage_gen failed to parse!");
-								ESP_LOGE(TAG, "%s", e.what());
-							}
+							output.voltage_gen = j.at("voltage_gen").get<Generator>();
 						}
-						else
-							errors.push_back("output.voltage_gen is invalid!");
-					}
-
-					if (j.contains("current_gen"))
-					{
-						if (j.at("current_gen").is_array())
+						catch (json::exception &e)
 						{
-							try
-							{
-								output.current_gen = j.at("current_gen").get<Generator>();
-							}
-							catch (json::exception &e)
-							{
-								errors.push_back("output.current_gen failed to parse!");
-							}
+							errors.push_back("output.voltage_gen failed to parse!");
+							ESP_LOGE(TAG, "%s", e.what());
 						}
-						else
-							errors.push_back("output.current_gen is invalid!");
 					}
-
-					if (j.contains("reverse_order"))
-					{
-						if (j.at("reverse_order").is_boolean())
-							output.reverse_order = j.at("reverse_order").get<bool>();
-						else
-							errors.push_back("output.reverse_order is invalid!");
-					}
-
-					if (j.contains("digital_delays"))
-					{
-						if (j.at("digital_delays").is_object())
-						{
-							const json &d = j.at("digital_delays");
-
-							// for (size_t i = 0; i < 4; ++i)
-							// {
-							// 	std::string key = std::to_string(i + 1);
-							// 	if (d.contains(key))
-							// 	{
-							// 		if (d.at(key).is_array())
-							// 		{
-							// 			for (const auto &el : d.at(key).items())
-							// 			{
-							// 				if (el.value().is_number_unsigned())
-							// 					output.dig_delays[i].push_back(el.value().get<uint32_t>());
-							// 				else
-							// 				{
-							// 					output.dig_delays[i].clear();
-							// 					errors.push_back("output.digital_delays."s + key + " failed to parse!");
-							// 					break;
-							// 				}
-							// 			}
-							// 		}
-							// 		else
-							// 			errors.push_back("output.digital_delays."s + key + " is invalid!");
-							// 	}
-							// }
-							for (size_t i = 0; i < 4; ++i)
-							{
-								std::string key = std::to_string(i + 1);
-								if (d.contains(key))
-								{
-									try
-									{
-										output.dig_delays[i] = d.at(key).get<std::vector<uint32_t>>();
-									}
-									catch (json::exception &e)
-									{
-										errors.push_back("output.digital_delays."s + key + " failed to parse!");
-									}
-								}
-							}
-						}
-						else
-							errors.push_back("output.digital_delays is invalid!");
-					}
-				}
-				else
-					errors.push_back("output is not an object!");
-			}
-
-			if (q.contains("ranges"))
-			{
-				const json &j = q.at("ranges");
-				if (j.is_object())
-				{
-					if (j.contains("in1"))
-					{
-						if (j.at("in1").is_string())
-							range[0] = j.at("in1").get<In_Range>();
-						else
-							errors.push_back("ranges.in1 is invalid!");
-					}
-					if (j.contains("in2"))
-					{
-						if (j.at("in2").is_string())
-							range[1] = j.at("in2").get<In_Range>();
-						else
-							errors.push_back("ranges.in2 is invalid!");
-					}
-					if (j.contains("in3"))
-					{
-						if (j.at("in3").is_string())
-							range[2] = j.at("in3").get<In_Range>();
-						else
-							errors.push_back("ranges.in3 is invalid!");
-					}
-					if (j.contains("in4"))
-					{
-						if (j.at("in4").is_string())
-							range[3] = j.at("in4").get<In_Range>();
-						else
-							errors.push_back("ranges.in4 is invalid!");
-					}
-				}
-				else
-					errors.push_back("ranges is not an object!");
 			}
 		}
 		else
@@ -353,6 +128,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	{
 		httpd_resp_set_status(req, HTTPD_400);
 		httpd_resp_set_type(req, "application/json");
+
 		ordered_json res = create_err_response(errors);
 		errors.clear();
 		std::string out = res.dump();
@@ -361,24 +137,13 @@ static esp_err_t settings_handler(httpd_req_t *req)
 		return ESP_OK;
 	}
 
-	board->set_input_ranges(range[0], range[1], range[2], range[3]);
-
-	const Board::ExecCfg &exec = board->validate_configs(std::move(general), std::move(trigger), std::move(input), std::move(output));
+	board->set_config(std::move(program), std::move(generators));
 
 	httpd_resp_set_status(req, HTTPD_200);
 	httpd_resp_set_type(req, "application/json");
 
 	ordered_json res = create_ok_response();
-	res["message"] = "Settings have been validated. Execution plan: ${data.exec}. Measurement multipliers: ${data.mult}. Units: ${data.unit}";
-	res["data"]["exec"]["do_trigger"] = exec.do_trg;
-	res["data"]["exec"]["do_analog_input"] = exec.do_anlg_inp;
-	res["data"]["exec"]["do_analog_output"] = exec.do_anlg_out;
-	res["data"]["exec"]["do_digital_input"] = exec.do_dgtl_inp;
-	res["data"]["exec"]["do_digital_output"] = exec.do_dgtl_out;
-	res["data"]["mult"]["in1"] = board->input_multiplier(Input::In1);
-	res["data"]["mult"]["in2"] = board->input_multiplier(Input::In2);
-	res["data"]["mult"]["in3"] = board->input_multiplier(Input::In3);
-	res["data"]["mult"]["in4"] = board->input_multiplier(Input::In4);
+	res["message"] = "Settings have been validated. No errors found. Units: ${data.unit}";
 	res["data"]["unit"]["in1"] = "V";
 	res["data"]["unit"]["in2"] = "V";
 	res["data"]["unit"]["in3"] = "V";

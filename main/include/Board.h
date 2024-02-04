@@ -9,6 +9,7 @@
 #include "MCP4XXX.h"
 
 #include "Generator.h"
+#include "Interpreter.h"
 
 //
 
@@ -24,8 +25,8 @@ enum class Input : uint8_t
 enum class Output : uint8_t
 {
 	None = 0,
-	In1 = 1,
-	In2 = 2,
+	Out1 = 1,
+	Out2 = 2,
 };
 
 enum class In_Range : uint8_t
@@ -43,12 +44,6 @@ class Board
 	// static constexpr size_t BUF_LEN = 1024 * 4;
 
 public:
-	struct ExecCfg;
-	struct GeneralCfg;
-	struct TriggerCfg;
-	struct InputCfg;
-	struct OutputCfg;
-
 	using WriteCb = std::function<bool(int16_t)>;
 
 public:
@@ -60,9 +55,11 @@ public:
 
 	esp_err_t set_input_ranges(In_Range, In_Range, In_Range, In_Range);
 
+	esp_err_t set_input_range(Input, In_Range);
+
 	esp_err_t execute(WriteCb &&);
 
-	const ExecCfg &validate_configs(GeneralCfg &&, TriggerCfg &&, InputCfg &&, OutputCfg &&);
+	void set_config(Executing::Program &&, std::vector<Generator> &&);
 
 	int16_t read_digital() const;
 	void write_digital(bool, bool, bool, bool) const;
@@ -85,50 +82,9 @@ public:
 	static inline int16_t volt_to_generated(float);
 
 	//
-public:
-	struct ExecCfg
-	{
-		bool do_trg = false;
-		bool do_anlg_inp = false;
-		bool do_anlg_out = false;
-		bool do_dgtl_inp = false;
-		bool do_dgtl_out = false;
-	};
-
-	struct GeneralCfg
-	{
-		uint32_t sample_count = 0;
-		uint32_t period_us = 0;
-	};
-
-	struct TriggerCfg
-	{
-		typedef bool (*trig_fcn)(int16_t);
-		Input port = Input::None;
-		trig_fcn callback = nullptr;
-	};
-
-	struct InputCfg
-	{
-		std::vector<Input> port_order;
-		uint32_t repeats = 1;
-		bool do_digital = true;
-	};
-
-	struct OutputCfg
-	{
-		Generator voltage_gen;
-		Generator current_gen;
-		bool reverse_order = false;
-		std::vector<uint32_t> dig_delays[4];
-	};
-
 private:
-	GeneralCfg general;
-	TriggerCfg trigger;
-	InputCfg input;
-	OutputCfg output;
-	ExecCfg exec;
+	std::vector<Generator> generators;
+	Executing::Program program;
 
 	MCP23008 expander_a;
 	MCP23008 expander_b;

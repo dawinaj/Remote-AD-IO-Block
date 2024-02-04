@@ -8,6 +8,21 @@
 
 using namespace std::string_literals;
 
+#define PARSE_ERR(reason)                                                \
+	{                                                                    \
+		prgValid = false;                                                \
+		err.push_back("Stmt #"s + std::to_string(line) + ": " + reason); \
+		continue;                                                        \
+	}
+
+static const char *expstx = "expected syntax: ";
+
+#define PARSE_ERR_SNTX() PARSE_ERR(expstx + syntax)
+
+#define ARG_CNT_CHK(cnt)    \
+	if (args.size() != cnt) \
+	PARSE_ERR_SNTX()
+
 std::vector<std::string> str_split_on_whitespace(const std::string &str)
 {
 	std::vector<std::string> ret;
@@ -166,176 +181,186 @@ namespace Executing
 		scope.reset();
 	}
 
-#define PARSE_ERR(msg)      \
-	{                       \
-		prgValid = false;   \
-		err.push_back(msg); \
-		continue;           \
-	}
+	//
 
-#define ARG_CNT_CHK(name, cnt) \
-	if (args.size() != cnt)    \
-	PARSE_ERR("Stmt #"s + std::to_string(line) + "(" name "): expected " #cnt " args!")
-}
-
-void Program::parse(const std::string &str, std::vector<std::string> &err)
-{
-	prgValid = true;
-
-	std::stack<Scope *, std::vector<Scope *>> scopes; // underlying storage type
-	scopes.push(&scope);							  // main
-
-	size_t beg = 0;
-	size_t end = 0;
-	size_t line = 0;
-
-	while (beg < str.length())
+	void Program::parse(const std::string &str, std::vector<std::string> &err)
 	{
-		end = str.find(';', beg);
+		prgValid = true;
 
-		if (end == std::string::npos)
-			end = str.length();
+		std::stack<Scope *, std::vector<Scope *>> scopes; // underlying storage type
+		scopes.push(&scope);							  // main
 
-		++line;
+		size_t beg = 0;
+		size_t end = 0;
+		size_t line = 0;
 
-		if (end - beg > 20) // sanity check
+		while (beg < str.length())
 		{
+			++line;
+
+			end = str.find(';', beg);
+			if (end == std::string::npos)
+				end = str.length();
+
+			if (end - beg > 32) // sanity check
+			{
+				beg = end + 1;
+				PARSE_ERR("malformed (too long, max 32)!");
+			}
+
+			std::string stmt = str.substr(beg, end - beg);
 			beg = end + 1;
-			PARSE_ERR("Stmt #"s + std::to_string(line) + ": malformed (too long)!");
-		}
 
-		std::string stmt = str.substr(beg, end - beg);
-		beg = end + 1;
+			std::vector<std::string> args = str_split_on_whitespace(stmt); // split and strip WSs
 
-		std::vector<std::string> args = str_split_on_whitespace(stmt);
+			// for (const auto& w : args)
+			// 	cout << '`' << w << '\'' << '\t';
+			// cout << endl;
 
-		// for (const auto& w : args)
-		// 	cout << '`' << w << '\'' << '\t';
-		// cout << endl;
+			if (args.empty()) // no command
+				continue;
 
-		if (args.empty()) // no command
-			continue;
+			std::string cmd = std::move(args[0]);
+			args.erase(args.begin());
 
-		std::string cmd = std::move(args[0]);
-		args.erase(args.begin());
-
-		if (cmd == "LOOP")
-		{
-			ARG_CNT_CHK("LOOP", 1);
-
-			size_t iters = 0;
-			if (!try_parse_integer(args[0], iters))
-				PARSE_ERR("Stmt #"s + std::to_string(line) + " (LOOP): arg #1 expected +int!");
-
-			Loop &l = scopes.top()->appendLoop(iters);
-			scopes.push(&l.getScope());
-		}
-
-		else if (cmd == "ENDLOOP")
-		{
-			ARG_CNT_CHK("ENDLOOP", 0);
-
-			if (scopes.size() == 1)
-				PARSE_ERR("Stmt #"s + std::to_string(line) + " (ENDLOOP): no matching LOOP!");
-
-			scopes.pop();
-		}
-
-		else // regular command
-		{
-			CmdStatement cs;
-
-			if (cmd == "ANIN")
+			if (cmd == "LOOP")
 			{
-				ARG_CNT_CHK("ANIN", 1);
-				cs.cmd = Command::ANIN;
+				const char *syntax = "LOOP <iterations (uint32)>";
 
-				if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 4))
-					PARSE_ERR("Stmt #"s + std::to_string(line) + " (ANIN): arg #1 expected input port (1|2|3|4)!");
-			}
-			else if (cmd == "ANOUT")
-			{
-				ARG_CNT_CHK("ANOUT", 2);
-				cs.cmd = Command::ANOUT;
+				ARG_CNT_CHK(1)
 
-				if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 2))
-					PARSE_ERR("Stmt #"s + std::to_string(line) + " (ANOUT): arg #1 expected output port (1|2)!");
+				size_t iters = 0;
+				if (!try_parse_integer(args[0], iters))
+					PARSE_ERR_SNTX()
 
-				if (!try_parse_floating_point(args[1], cs.arg.f) || !std::isfinite(cs.arg.f))
-					PARSE_ERR("Stmt #"s + std::to_string(line) + " (ANOUT): arg #2 expected float!");
-			}
-			else if (cmd == "ANGEN")
-			{
-				ARG_CNT_CHK("ANGEN", 2);
-				cs.cmd = Command::ANGEN;
-
-				if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 2))
-					PARSE_ERR("Stmt #"s + std::to_string(line) + " (ANGEN): arg #1 expected output port (1|2)!");
-
-				if (!try_parse_integer(args[1], cs.arg.i) || !std::isfinite(cs.arg.f))
-					PARSE_ERR("Stmt #"s + std::to_string(line) + " (ANGEN): arg #2 expected Generator index!");
+				Loop &l = scopes.top()->appendLoop(iters);
+				scopes.push(&l.getScope());
 			}
 
-			else if (cmd == "DGIN")
+			else if (cmd == "ENDLOOP")
 			{
-				ARG_CNT_CHK("DGIN", 0);
-				cs.cmd = Command::DGIN;
-			}
-			else if (cmd == "DGOUT")
-			{
-				ARG_CNT_CHK("DGOUT", 1);
-				cs.cmd = Command::DGOUT;
+				const char *syntax = "ENDLOOP <no args>";
 
-				if (!try_parse_integer(args[0], cs.arg.i, 0) || !(cs.arg.i <= 0b1111))
-					PARSE_ERR("Stmt #"s + std::to_string(line) + " (DGOUT): arg #1 expected 4-bit hex/oct/dec int!");
+				ARG_CNT_CHK(0)
+
+				if (scopes.size() == 1)
+					PARSE_ERR("ENDLOOP has no matching LOOP!")
+
+				scopes.pop();
 			}
 
-			else if (cmd == "DELAY")
+			else // regular command
 			{
-				ARG_CNT_CHK("DELAY", 1);
-				cs.cmd = Command::DELAY;
+				CmdStatement cs;
 
-				if (!try_parse_integer(args[0], cs.arg.i) || !(cs.arg.i > 0))
-					PARSE_ERR("Stmt #"s + std::to_string(line) + " (DELAY): arg #1 expected +int!");
-			}
-			else if (cmd == "RANGE")
-			{
-				ARG_CNT_CHK("RANGE", 2);
-				cs.cmd = Command::RANGE;
+				// analog
+				if (cmd == "ANIN")
+				{
+					const char *syntax = "ANIN <port (1|2|3|4)>";
+					cs.cmd = Command::ANIN;
 
-				if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 4))
-					PARSE_ERR("Stmt #"s + std::to_string(line) + " (RANGE): arg #1 expected int 1-4!");
+					ARG_CNT_CHK(1)
 
-				if (args[1] == "OFF")
-					cs.arg.i = 0;
-				else if (args[1] == "MIN")
-					cs.arg.i = 1;
-				else if (args[1] == "MED")
-					cs.arg.i = 2;
-				else if (args[1] == "MAX")
-					cs.arg.i = 3;
+					if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 4))
+						PARSE_ERR_SNTX()
+				}
+
+				else if (cmd == "ANOUT")
+				{
+					const char *syntax = "ANOUT <port (1|2)> <voltage (float)>";
+					cs.cmd = Command::ANOUT;
+
+					ARG_CNT_CHK(2)
+
+					if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 2))
+						PARSE_ERR_SNTX()
+
+					if (!try_parse_floating_point(args[1], cs.arg.f) || !std::isfinite(cs.arg.f))
+						PARSE_ERR_SNTX()
+				}
+
+				else if (cmd == "ANGEN")
+				{
+					const char *syntax = "ANGEN <port (1|2)> <generator idx (uint<16)>";
+					cs.cmd = Command::ANGEN;
+
+					ARG_CNT_CHK(2)
+
+					if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 2))
+						PARSE_ERR_SNTX()
+
+					if (!try_parse_integer(args[1], cs.arg.u) || !(cs.port < 16))
+						PARSE_ERR_SNTX()
+				}
+
+				// digital
+				else if (cmd == "DGIN")
+				{
+					const char *syntax = "DGIN <no args>";
+					cs.cmd = Command::DGIN;
+
+					ARG_CNT_CHK(0)
+				}
+
+				else if (cmd == "DGOUT")
+				{
+					const char *syntax = "DGOUT <state (4 bits hex/oct/dec)>";
+					cs.cmd = Command::DGOUT;
+
+					ARG_CNT_CHK(1)
+
+					if (!try_parse_integer(args[0], cs.arg.u, 0) || !(cs.arg.u <= 0b1111))
+						PARSE_ERR_SNTX()
+				}
+
+				// other
+				else if (cmd == "DELAY")
+				{
+					const char *syntax = "DELAY <microseconds (+uint32)>";
+					cs.cmd = Command::DELAY;
+
+					ARG_CNT_CHK(1)
+
+					if (!try_parse_integer(args[0], cs.arg.u) || !(cs.arg.u > 0))
+						PARSE_ERR_SNTX()
+				}
+
+				else if (cmd == "RANGE")
+				{
+					const char *syntax = "RANGE <port (1|2|3|4)> <range (OFF|MIN|MED|MAX)>";
+					cs.cmd = Command::RANGE;
+
+					ARG_CNT_CHK(2)
+
+					if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 4))
+						PARSE_ERR_SNTX()
+
+					if (args[1] == "OFF")
+						cs.arg.u = 0;
+					else if (args[1] == "MIN")
+						cs.arg.u = 1;
+					else if (args[1] == "MED")
+						cs.arg.u = 2;
+					else if (args[1] == "MAX")
+						cs.arg.u = 3;
+					else
+						PARSE_ERR_SNTX()
+				}
+
 				else
-					PARSE_ERR("Stmt #"s + std::to_string(line) + " (RANGE): arg #2 expected (OFF|MIN|MED|MAX)!");
+					PARSE_ERR("unknown command!")
+
+				// no error, command finished, append to highest scope
+				scopes.top()->appendCmd(cs);
 			}
-
-			else
-				PARSE_ERR("Stmt #"s + std::to_string(line) + ": unknown command!");
-
-			// no error, command finished, append to highest scope
-			scopes.top()->appendCmd(cs);
 		}
+		//*/
+
+		scopes.pop(); // main
+
+		for (size_t i = 0; i < scopes.size(); ++i)
+			PARSE_ERR("LOOP missing matching ENDLOOP!");
+
+		// out.appendCmd(cmd);
 	}
-	//*/
-
-	scopes.pop(); // main
-
-	if (scopes.size())
-	{
-		valid = false;
-		err.push_back("Statement #"s + std::to_string(line) + ": LOOP missing matching ENDLOOP! x" + std::to_string(scopes.size()));
-	}
-
-	// out.appendCmd(cmd);
-}
-}
-;
+};
