@@ -75,7 +75,8 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	std::string post(req->content_len, '\0');
 
 	int ret = httpd_req_recv(req, post.data(), req->content_len);
-	if (ret <= 0)
+
+	if (ret <= 0) // failed to read
 	{
 		if (ret == HTTPD_SOCK_ERR_TIMEOUT)
 			httpd_resp_send_408(req);
@@ -85,6 +86,8 @@ static esp_err_t settings_handler(httpd_req_t *req)
 
 	ESP_LOGV(TAG, "%s", post.c_str());
 
+	Executing::Program program;
+	std::vector<Generator> generators;
 	std::vector<std::string> errors;
 
 	if (str_is_ascii(post))
@@ -92,37 +95,47 @@ static esp_err_t settings_handler(httpd_req_t *req)
 		const json q = json::parse(post, nullptr, false);
 		if (!q.is_discarded())
 		{
+			//*/
 			if (q.contains("program") && q.at("program").is_string())
 			{
 				// parse program
+				const std::string &prg = q.at("program").get_ref<const json::string_t &>();
+				program.parse(prg, errors);
 			}
+			//*/
 
+			//*/
 			if (q.contains("generators") && q.at("generators").is_array())
 			{
 				// parse generators
 				size_t count = q.at("generators").size();
-				count = std::min(count, 16);
+				// count = std::min(count, (size_t)16);
+				generators.reserve(count);
 
-				while (count--)
-					if (j.at("voltage_gen").is_array())
+				for (auto &[key, val] : q.at("generators").items())
+				{
+					try
 					{
-						try
-						{
-							output.voltage_gen = j.at("voltage_gen").get<Generator>();
-						}
-						catch (json::exception &e)
-						{
-							errors.push_back("output.voltage_gen failed to parse!");
-							ESP_LOGE(TAG, "%s", e.what());
-						}
+						Generator g = val.get<Generator>();
+						generators.push_back(std::move(g));
 					}
+					catch (json::exception &e)
+					{
+						generators.emplace_back();
+						errors.push_back("Generator #"s + key + " failed to parse!");
+						ESP_LOGE(TAG, "%s", e.what());
+					}
+				}
 			}
+			//*/
 		}
 		else
 			errors.push_back("JSON is invalid!");
 	}
 	else
-		errors.push_back("JSON is invalid!");
+		errors.push_back("JSON must be ASCII!");
+
+	board->move_config(program, generators);
 
 	if (!errors.empty())
 	{
@@ -136,8 +149,6 @@ static esp_err_t settings_handler(httpd_req_t *req)
 
 		return ESP_OK;
 	}
-
-	board->set_config(std::move(program), std::move(generators));
 
 	httpd_resp_set_status(req, HTTPD_200);
 	httpd_resp_set_type(req, "application/json");
@@ -153,7 +164,6 @@ static esp_err_t settings_handler(httpd_req_t *req)
 
 	return ESP_OK;
 }
-
 //
 
 void board_io_task(void *arg)

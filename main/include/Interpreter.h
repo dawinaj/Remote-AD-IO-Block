@@ -5,6 +5,14 @@
 #include <memory>
 #include <variant>
 
+#define DEFAULT_CP_CTOR(Class)   \
+	Class(Class &rhs) = default; \
+	Class &operator=(Class &rhs) = default;
+
+#define DEFAULT_MV_CTOR(Class)    \
+	Class(Class &&rhs) = default; \
+	Class &operator=(Class &&rhs) = default;
+
 namespace Executing
 {
 
@@ -38,6 +46,8 @@ namespace Executing
 
 		CmdStatement() = default;
 		~CmdStatement() = default;
+		// DEFAULT_CP_CTOR(CmdStatement)
+		// DEFAULT_MV_CTOR(CmdStatement)
 	};
 
 	//
@@ -61,6 +71,8 @@ namespace Executing
 	public:
 		Scope();
 		~Scope();
+		// DEFAULT_CP_CTOR(Scope) // illegal, cant copy vector with uniqueptrs
+		DEFAULT_MV_CTOR(Scope)
 
 		CmdPtr getCmd();
 		bool finished();
@@ -82,6 +94,8 @@ namespace Executing
 	public:
 		Loop(size_t = 0);
 		~Loop();
+		// DEFAULT_CP_CTOR(Loop)
+		// DEFAULT_MV_CTOR(Loop)
 
 		CmdPtr getCmd();
 		bool finished();
@@ -102,6 +116,8 @@ namespace Executing
 	public:
 		Program() = default;
 		~Program() = default;
+		// DEFAULT_CP_CTOR(Program)
+		DEFAULT_MV_CTOR(Program)
 
 		void parse(const std::string &, std::vector<std::string> &);
 

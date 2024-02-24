@@ -11,7 +11,7 @@
 #include "nlohmann/json.hpp"
 using namespace nlohmann;
 
-enum SignalType : int
+enum SignalType : int8_t
 {
 	Virtual = 0,
 	Const,
@@ -19,8 +19,9 @@ enum SignalType : int
 	Sine,
 	Square,
 	Triangle,
+	Chirp,
 
-	Delay = std::numeric_limits<int>::min(),
+	Delay = std::numeric_limits<int8_t>::min(),
 
 };
 
@@ -31,6 +32,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM(SignalType, {
 											 {SignalType::Sine, "Sine"},
 											 {SignalType::Square, "Square"},
 											 {SignalType::Triangle, "Triangle"},
+											 {SignalType::Chirp, "Chirp"},
 											 {SignalType::Delay, "Delay"},
 										 })
 
@@ -70,6 +72,17 @@ public:
 class Signal
 {
 	friend SignalHdl;
+
+protected:
+	static inline float ang_to_sine(float ang) // Full sine cycle on <0, 1>, duplicated to negatives for simplicity
+	{
+		float aang = std::abs(ang);
+		bool flip = std::signbit(ang) != (aang > 0.5f);
+
+		float smpl = 16.0f * aang * (0.5f - aang);
+		float bhskr = 4.0f * smpl / (5.0f - smpl);
+		return flip ? -bhskr : bhskr;
+	}
 
 public:
 	using index_t = int32_t;
@@ -130,55 +143,9 @@ public:
 	friend void from_json(const json &j, SignalImpulse &o) {}
 };
 
-/*/
-constexpr uint32_t sineQuarter16[65] = {
-	32768, 33572, 34376, 35178, 35980, 36779, 37576, 38370, 39161, 39947, 40730,
-	41507, 42280, 43046, 43807, 44561, 45307, 46047, 46778, 47500, 48214, 48919,
-	49614, 50298, 50972, 51636, 52287, 52927, 53555, 54171, 54773, 55362, 55938,
-	56499, 57047, 57579, 58097, 58600, 59087, 59558, 60013, 60451, 60873, 61278,
-	61666, 62036, 62389, 62724, 63041, 63339, 63620, 63881, 64124, 64348, 64553,
-	64739, 64905, 65053, 65180, 65289, 65377, 65446, 65496, 65525, 65535};
-
-inline int32_t sin16(uint32_t x)
-{
-	x = x % 65536;
-	uint32_t quotient = x / 256;
-	uint32_t remainder = x % 256;
-	uint32_t a = 0;
-	uint32_t b = 0;
-
-	if (quotient < 64)
-	{
-		a = sineQuarter16[quotient];
-		b = sineQuarter16[quotient + 1];
-		return a + (b - a) * remainder / 256;
-	}
-	if (quotient < 128)
-	{
-		a = sineQuarter16[128 - quotient];
-		b = sineQuarter16[127 - quotient];
-		return a - (a - b) * remainder / 256;
-	}
-	if (quotient < 192)
-	{
-		a = 65536 - sineQuarter16[quotient - 128];
-		b = 65536 - sineQuarter16[quotient - 127];
-		return a - (a - b) * remainder / 256;
-	}
-	a = 65536 - sineQuarter16[256 - quotient];
-	b = 65536 - sineQuarter16[255 - quotient];
-	return a + (b - a) * remainder / 256;
-}
-//*/
-
 class SignalSine : public Signal
 {
 	index_t T;
-	inline float sine_half(index_t i) const
-	{
-		float f = 2.0f * i / T;
-		return 4.0f * f * (1.0f - f);
-	}
 
 public:
 	SignalSine(index_t t = 1) : T(t) {}
@@ -187,10 +154,8 @@ public:
 	float get(index_t i) const override
 	{
 		i %= T;
-		if (2 * i <= T)
-			return sine_half(i);
-		else
-			return -sine_half(i - T / 2);
+		float ang = static_cast<float>(i) / T;
+		return ang_to_sine(ang);
 	}
 	SignalType type() const override
 	{
@@ -235,11 +200,11 @@ public:
 		i = i % T;
 		float x = float(i) / T;
 
-		if (x < 0.25)
-			return x * 4;
-		if (x > 0.75)
-			return (x - 1) * 4;
-		return (0.5 - x) * 4;
+		if (4 * i < T)
+			return x * 4.0f;
+		if (4 * i > 3 * T)
+			return (x - 1) * 4.0f;
+		return (0.5f - x) * 4.0f;
 	}
 	SignalType type() const override
 	{
@@ -247,6 +212,34 @@ public:
 	}
 
 	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalTriangle, T);
+};
+
+class SignalChirp : public Signal
+{
+	index_t T;
+	float FS;
+	float FD;
+
+public:
+	SignalChirp(index_t t = 1, float fs = 0, float fd = 0) : T(t), FS(fs), FD(fd) {}
+	~SignalChirp() = default;
+
+	float get(index_t i) const override
+	{
+		i %= T;
+		float fr = static_cast<float>(i) / T;
+
+		float phs = i * (FS + 0.5f * FD * fr); // from the net, integral? idk
+
+		float ang = std::fmod(phs, 1.0f);
+		return ang_to_sine(ang);
+	}
+	SignalType type() const override
+	{
+		return SignalType::Chirp;
+	}
+
+	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalChirp, T, FS, FD);
 };
 
 class SignalDelay : public Signal

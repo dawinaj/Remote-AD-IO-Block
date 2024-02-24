@@ -97,48 +97,10 @@ err:
 	return ret;
 }
 
-const Board::ExecCfg &Board::validate_configs(GeneralCfg &&g, TriggerCfg &&t, InputCfg &&i, OutputCfg &&o) // all shit
+void Board::move_config(Executing::Program &p, std::vector<Generator> &g)
 {
-	general = std::move(g);
-	trigger = std::move(t);
-	input = std::move(i);
-	output = std::move(o);
-
-	ExecCfg e = {
-		.do_trg = true,
-		.do_anlg_inp = true,
-		.do_anlg_out = true,
-		.do_dgtl_inp = true,
-		.do_dgtl_out = true,
-	};
-
-	if (trigger.port == Input::None)
-		e.do_trg = false;
-	if (trigger.callback == nullptr)
-		e.do_trg = false;
-
-	if (input.port_order.empty())
-		e.do_anlg_inp = false;
-	if (input.repeats == 0)
-		e.do_anlg_inp = false;
-
-	if (input.do_digital == false)
-		e.do_dgtl_inp = false;
-
-	e.do_anlg_out = false;
-	if (!output.voltage_gen.empty())
-		e.do_anlg_out = true;
-	if (!output.current_gen.empty())
-		e.do_anlg_out = true;
-
-	e.do_dgtl_out = false;
-	for (size_t i = 0; i < 4; ++i)
-		if (!output.dig_delays[i].empty())
-			e.do_dgtl_out = true;
-
-	exec = e;
-
-	return exec;
+	program = std::move(p);
+	generators = std::move(g);
 }
 
 // general execution plan:
@@ -157,145 +119,117 @@ esp_err_t Board::execute(WriteCb &&callback)
 	Generator *gen1 = nullptr;
 	Generator *gen2 = nullptr;
 
-	if (!output.reverse_order)
-	{
-		trx1 = &trx_out[0];
-		trx2 = &trx_out[1];
-		gen1 = &output.voltage_gen;
-		gen2 = &output.current_gen;
-	}
-	else
-	{
-		trx1 = &trx_out[1];
-		trx2 = &trx_out[0];
-		gen1 = &output.current_gen;
-		gen2 = &output.voltage_gen;
-	}
-
-	//
-
 	int64_t start = esp_timer_get_time();
 	int64_t now = start;
-	int64_t next = now + general.period_us;
+	int64_t next = now;
 
-	if (exec.do_trg)
-	{
-		spi_transaction_t &trx = trx_in[static_cast<uint8_t>(trigger.port) - 1];
-		while (1)
+	size_t iter = 0;
+
+	goto exit;
+	//
+	/*/
+		size_t in_idx = 0;
+		size_t rpt = 0;
+
+		Input in = Input::None;
+		spi_transaction_t *trxin = nullptr;
+
+		start = next; // reset deltatime
+
+		float gen1_val = gen1->get(0);
+		float gen2_val = gen2->get(0);
+
+		bool dig_out[4] = {true, true, true, true};
+		int64_t dig_next[4] = {start, start, start, start};
+		size_t dig_idx[4] = {0, 0, 0, 0};
+
+		size_t iter = 0;
+		while (iter < general.sample_count)
 		{
+			// setup
+
+			int16_t meas = 0;
+
+			if (exec.do_anlg_inp)
+				in = input.port_order[in_idx];
+
+			if (exec.do_dgtl_out)
+				for (size_t i = 0; i < 4; ++i)
+					if (!output.dig_delays[i].empty())
+					{
+						while (now >= dig_next[i])
+						{
+							dig_out[i] = !dig_out[i];
+							dig_next[i] += output.dig_delays[i][dig_idx[i]];
+							if (++dig_idx[i] == output.dig_delays[i].size())
+								dig_idx[i] = 0;
+						}
+					}
+
+			// wait for synchronisation
+
 			while ((now = esp_timer_get_time()) < next)
 				NOOP;
 			next = now + general.period_us;
 
-			adc.send_trx(trx);
-			adc.recv_trx();
-			if (trigger.callback(conv_meas(adc.parse_trx(trx))))
-				break;
-		}
-	}
+			// lessago
 
-	//
+			if (in != Input::None)
+			{
+				trxin = &trx_in[static_cast<uint8_t>(in) - 1];
+				adc.send_trx(*trxin);
+			}
 
-	size_t in_idx = 0;
-	size_t rpt = 0;
+			if (exec.do_dgtl_inp)
+				meas = read_digital();
 
-	Input in = Input::None;
-	spi_transaction_t *trxin = nullptr;
+			if (exec.do_dgtl_out)
+				write_digital(dig_out[0], dig_out[1], dig_out[2], dig_out[3]);
 
-	start = next; // reset deltatime
-
-	float gen1_val = gen1->get(0);
-	float gen2_val = gen2->get(0);
-
-	bool dig_out[4] = {true, true, true, true};
-	int64_t dig_next[4] = {start, start, start, start};
-	size_t dig_idx[4] = {0, 0, 0, 0};
-
-	size_t iter = 0;
-	while (iter < general.sample_count)
-	{
-		// setup
-
-		int16_t meas = 0;
-
-		if (exec.do_anlg_inp)
-			in = input.port_order[in_idx];
-
-		if (exec.do_dgtl_out)
-			for (size_t i = 0; i < 4; ++i)
-				if (!output.dig_delays[i].empty())
+			if (exec.do_anlg_out)
+			{
+				if (!gen1->empty())
 				{
-					while (now >= dig_next[i])
-					{
-						dig_out[i] = !dig_out[i];
-						dig_next[i] += output.dig_delays[i][dig_idx[i]];
-						if (++dig_idx[i] == output.dig_delays[i].size())
-							dig_idx[i] = 0;
-					}
+					dac.write_trx(*trx1, conv_gen(volt_to_generated(gen1_val)));
+					dac.send_trx(*trx1);
+					gen1_val = gen1->get(next - start);
+					dac.recv_trx();
+				}
+				if (!gen2->empty())
+				{
+					dac.write_trx(*trx2, conv_gen(volt_to_generated(gen2_val)));
+					dac.send_trx(*trx2);
+					gen2_val = gen2->get(next - start);
+					dac.recv_trx();
+				}
+			}
+
+			if (in != Input::None)
+			{
+				adc.recv_trx();
+				meas |= conv_meas(adc.parse_trx(*trxin));
+			}
+
+			if (exec.do_dgtl_inp || exec.do_anlg_inp)
+			{
+				bool ok = callback(meas);
+
+				if (!ok)
+					goto exit;
+			}
+
+			if (exec.do_anlg_inp)
+				if (++rpt == input.repeats)
+				{
+					rpt = 0;
+					if (++in_idx == input.port_order.size())
+						in_idx = 0;
 				}
 
-		// wait for synchronisation
-
-		while ((now = esp_timer_get_time()) < next)
-			NOOP;
-		next = now + general.period_us;
-
-		// lessago
-
-		if (in != Input::None)
-		{
-			trxin = &trx_in[static_cast<uint8_t>(in) - 1];
-			adc.send_trx(*trxin);
+			++iter;
 		}
 
-		if (exec.do_dgtl_inp)
-			meas = read_digital();
-
-		if (exec.do_dgtl_out)
-			write_digital(dig_out[0], dig_out[1], dig_out[2], dig_out[3]);
-
-		if (exec.do_anlg_out)
-		{
-			if (!gen1->empty())
-			{
-				dac.write_trx(*trx1, conv_gen(volt_to_generated(gen1_val)));
-				dac.send_trx(*trx1);
-				gen1_val = gen1->get(next - start);
-				dac.recv_trx();
-			}
-			if (!gen2->empty())
-			{
-				dac.write_trx(*trx2, conv_gen(volt_to_generated(gen2_val)));
-				dac.send_trx(*trx2);
-				gen2_val = gen2->get(next - start);
-				dac.recv_trx();
-			}
-		}
-
-		if (in != Input::None)
-		{
-			adc.recv_trx();
-			meas |= conv_meas(adc.parse_trx(*trxin));
-		}
-
-		if (exec.do_dgtl_inp || exec.do_anlg_inp)
-		{
-			bool ok = callback(meas);
-
-			if (!ok)
-				goto exit;
-		}
-
-		if (exec.do_anlg_inp)
-			if (++rpt == input.repeats)
-			{
-				rpt = 0;
-				if (++in_idx == input.port_order.size())
-					in_idx = 0;
-			}
-
-		++iter;
-	}
+	//*/
 
 	// if (buf_pos)
 	// 	input.callback(buffers[buf_idx].data(), buf_pos, ctx);

@@ -59,7 +59,7 @@ public:
 
 	esp_err_t execute(WriteCb &&);
 
-	void set_config(Executing::Program &&, std::vector<Generator> &&);
+	void move_config(Executing::Program &, std::vector<Generator> &);
 
 	int16_t read_digital() const;
 	void write_digital(bool, bool, bool, bool) const;
