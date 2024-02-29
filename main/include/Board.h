@@ -37,65 +37,36 @@ enum class In_Range : uint8_t
 	Max = 3,
 };
 
-class Board
+namespace Board
 {
 	static constexpr const char *const TAG = "IOBoard";
 	// static constexpr size_t BUF_CNT = 2;
 	// static constexpr size_t BUF_LEN = 1024 * 4;
 
-public:
 	using WriteCb = std::function<bool(int16_t)>;
 
-public:
 	static constexpr float v_ref = 4.096f;
 
-public:
-	Board();
-	~Board();
+	esp_err_t init();
+	esp_err_t deinit();
 
 	esp_err_t set_input_ranges(In_Range, In_Range, In_Range, In_Range);
-
 	esp_err_t set_input_range(Input, In_Range);
 
 	esp_err_t execute(WriteCb &&);
 
 	void move_config(Executing::Program &, std::vector<Generator> &);
 
-	int16_t read_digital() const;
-	void write_digital(bool, bool, bool, bool) const;
+	uint32_t read_digital();
+	void write_digital(uint32_t);
 
-private:
-	void reset_outputs();
+	float input_multiplier(Input);
 
-private:
-	void test();
+	// public?
+	int16_t conv_meas(MCP3204::out_t);
+	MCP4922::in_t conv_gen(int16_t);
 
-public:
-	float input_multiplier(Input) const;
-
-public:
-	static inline int16_t conv_meas(MCP3204::out_t);
-	static inline MCP4922::in_t conv_gen(int16_t);
-
-public:
 	static inline float measured_to_volt(int16_t);
 	static inline int16_t volt_to_generated(float);
 
-	//
-private:
-	std::vector<Generator> generators;
-	Executing::Program program;
-
-	MCP23008 expander_a;
-	MCP23008 expander_b;
-
-	MCP3204 adc;
-	MCP4922 dac;
-
-	In_Range range_in[4];
-	spi_transaction_t trx_in[4];
-	spi_transaction_t trx_out[2];
-
-	const gpio_num_t dig_in[4] = {GPIO_NUM_34, GPIO_NUM_35, GPIO_NUM_36, GPIO_NUM_39};
-	const gpio_num_t dig_out[4] = {GPIO_NUM_4, GPIO_NUM_25, GPIO_NUM_26, GPIO_NUM_27};
 };
