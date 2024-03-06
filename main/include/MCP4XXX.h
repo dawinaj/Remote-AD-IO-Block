@@ -91,7 +91,7 @@ public:
 
 	//
 
-	esp_err_t acquire_spi(TickType_t timeout = portMAX_DELAY)
+	esp_err_t acquire_spi(TickType_t timeout = portMAX_DELAY) const
 	{
 		ESP_RETURN_ON_ERROR(
 			spi_device_acquire_bus(spi_hdl, timeout),
@@ -100,13 +100,13 @@ public:
 		return ESP_OK;
 	}
 
-	esp_err_t release_spi()
+	esp_err_t release_spi() const
 	{
 		spi_device_release_bus(spi_hdl); // return void
 		return ESP_OK;
 	}
 
-	void set_float_volt(bool chnl, float flv)
+	void set_float_volt(bool chnl, float flv) const
 	{
 		spi_transaction_t trx = make_trx(chnl);
 
@@ -117,7 +117,7 @@ public:
 		recv_trx();
 	}
 
-	void shutdown_channel(bool chnl)
+	void shutdown_channel(bool chnl) const
 	{
 		spi_transaction_t trx = make_trx(chnl, true);
 		send_trx(trx);
@@ -125,7 +125,7 @@ public:
 	}
 
 	// private:
-	inline esp_err_t send_trx(spi_transaction_t &trx)
+	inline esp_err_t send_trx(spi_transaction_t &trx) const
 	{
 		esp_err_t ret = ESP_OK;
 
@@ -139,7 +139,7 @@ public:
 		return ret;
 	}
 
-	inline esp_err_t recv_trx(TickType_t timeout = portMAX_DELAY)
+	inline esp_err_t recv_trx(TickType_t timeout = portMAX_DELAY) const
 	{
 		esp_err_t ret = spi_device_polling_end(spi_hdl, timeout);
 
@@ -150,12 +150,12 @@ public:
 		return ret;
 	}
 
-	inline void write_trx(spi_transaction_t &trx, in_t in)
+	inline void write_trx(spi_transaction_t &trx, in_t in) const
 	{
 		*reinterpret_cast<uint32_t *>(trx.tx_data) = SPI_SWAP_DATA_TX(in, B);
 	}
 
-	spi_transaction_t make_trx(bool chnl, bool shdn = false)
+	spi_transaction_t make_trx(bool chnl, bool shdn = false) const
 	{
 		// Request format (tx)
 		//

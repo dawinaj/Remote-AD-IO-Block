@@ -183,9 +183,9 @@ namespace Executing
 
 	//
 
-	void Program::parse(const std::string &str, std::vector<std::string> &err)
+	bool Program::parse(const std::string &str, std::vector<std::string> &err)
 	{
-		prgValid = true;
+		bool prgValid = true;
 
 		std::stack<Scope *, std::vector<Scope *>> scopes; // underlying storage type
 		scopes.push(&scope);							  // main
@@ -362,5 +362,7 @@ namespace Executing
 			PARSE_ERR("LOOP missing matching ENDLOOP!");
 
 		// out.appendCmd(cmd);
+
+		return prgValid;
 	}
 };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <limits>
 #include <cmath>
 #include <functional>
@@ -20,6 +21,7 @@ enum class Input : uint8_t
 	In2 = 2,
 	In3 = 3,
 	In4 = 4,
+	Inv = 5,
 };
 
 enum class Output : uint8_t
@@ -27,9 +29,10 @@ enum class Output : uint8_t
 	None = 0,
 	Out1 = 1,
 	Out2 = 2,
+	Inv = 3,
 };
 
-enum class In_Range : uint8_t
+enum class AnIn_Range : uint8_t
 {
 	OFF = 0,
 	Min = 1,
@@ -50,10 +53,11 @@ namespace Board
 	esp_err_t init();
 	esp_err_t deinit();
 
-	esp_err_t set_input_ranges(In_Range, In_Range, In_Range, In_Range);
-	esp_err_t set_input_range(Input, In_Range);
+	esp_err_t set_input_range(Input, AnIn_Range);
+	esp_err_t disable_inputs();
+	esp_err_t enable_inputs();
 
-	esp_err_t execute(WriteCb &&);
+	esp_err_t execute(WriteCb &&, std::atomic_bool &);
 
 	void move_config(Executing::Program &, std::vector<Generator> &);
 
@@ -66,7 +70,6 @@ namespace Board
 	int16_t conv_meas(MCP3204::out_t);
 	MCP4922::in_t conv_gen(int16_t);
 
-	static inline float measured_to_volt(int16_t);
-	static inline int16_t volt_to_generated(float);
-
+	float measured_to_volt(int16_t);
+	int16_t volt_to_generated(float);
 };

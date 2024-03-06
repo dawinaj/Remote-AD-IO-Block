@@ -20,8 +20,8 @@ namespace Board
 	constexpr size_t dg_in_num = 4;
 	constexpr size_t dg_out_num = 4;
 
-	constexpr gpio_num_t dig_in[dg_in_num] = {GPIO_NUM_34, GPIO_NUM_35, GPIO_NUM_36, GPIO_NUM_39};
-	constexpr gpio_num_t dig_out[dg_out_num] = {GPIO_NUM_4, GPIO_NUM_25, GPIO_NUM_26, GPIO_NUM_27};
+	constexpr std::array<gpio_num_t, dg_in_num> dig_in = {GPIO_NUM_34, GPIO_NUM_35, GPIO_NUM_36, GPIO_NUM_39};
+	constexpr std::array<gpio_num_t, dg_out_num> dig_out = {GPIO_NUM_4, GPIO_NUM_25, GPIO_NUM_26, GPIO_NUM_27};
 
 	MCP23008 expander_a(I2C_NUM_0, 0b000);
 	MCP23008 expander_b(I2C_NUM_0, 0b001);
@@ -29,25 +29,55 @@ namespace Board
 	MCP3204 adc(SPI3_HOST, GPIO_NUM_5, 2'000'000);
 	MCP4922 dac(SPI2_HOST, GPIO_NUM_15, 20'000'000);
 
-	In_Range range_in[an_in_num];
+	std::array<AnIn_Range, an_in_num> an_in_range;
 
-	spi_transaction_t trx_in[an_in_num];
-	spi_transaction_t trx_out[an_out_num];
+	std::array<spi_transaction_t, an_in_num> trx_in;
+	std::array<spi_transaction_t, an_out_num> trx_out;
 
 	std::vector<Generator> generators;
 	Executing::Program program;
+
+	// LUT
+	constexpr uint32_t dg_out_mask = (1 << dg_out_num) - 1;
+	constexpr uint32_t dg_in_mask = (1 << dg_in_num) - 1;
+
+	constexpr size_t dg_out_lut_sz = 1 << dg_out_num;
+
+	constexpr std::array<uint32_t, dg_out_lut_sz> dg_out_lut_s = []()
+	{
+		std::array<uint32_t, dg_out_lut_sz> ret = {};
+		for (size_t in = 0; in < dg_out_lut_sz; ++in)
+			for (size_t b = 0; b < dg_out_num; ++b)
+				if (in & BIT(b))
+					ret[in] |= BIT(dig_out[b]);
+		return ret;
+	}();
+
+	constexpr std::array<uint32_t, dg_out_lut_sz> dg_out_lut_r = []()
+	{
+		std::array<uint32_t, dg_out_lut_sz> ret = {};
+		for (size_t in = 0; in < dg_out_lut_sz; ++in)
+			for (size_t b = 0; b < dg_out_num; ++b)
+				if (~in & BIT(b))
+					ret[in] |= BIT(dig_out[b]);
+		return ret;
+	}();
+
+	void reset_outputs();
+	inline uint8_t range_to_expander_steering(AnIn_Range);
+
 	//
 
 	esp_err_t init()
 	{
 		for (size_t i = 0; i < an_in_num; ++i)
-			range_in[i] = In_Range::OFF;
+			an_in_range[i] = AnIn_Range::OFF;
 
 		for (size_t i = 0; i < an_in_num; ++i)
 			trx_in[i] = adc.make_trx(i);
 
-		trx_out[0] = dac.make_trx(1);
-		trx_out[1] = dac.make_trx(0);
+		for (size_t i = 0; i < an_out_num; ++i)
+			trx_out[i] = adc.make_trx(an_out_num - i - 1); // reversed, because reversed chip
 
 		for (size_t i = 0; i < dg_in_num; ++i)
 			gpio_set_direction(dig_in[i], GPIO_MODE_INPUT);
@@ -85,41 +115,52 @@ namespace Board
 
 	//
 
-	esp_err_t set_input_ranges(In_Range r1, In_Range r2, In_Range r3, In_Range r4)
+	esp_err_t set_input_range(Input in, AnIn_Range r)
 	{
-		static constexpr uint8_t steering[] = {0b0000, 0b0001, 0b0010, 0b0100};
+		if (in == Input::None || in == Input::Inv) [[unlikely]]
+			return ESP_ERR_INVALID_ARG;
 
+		uint8_t pos = static_cast<uint8_t>(in) - 1;
+		an_in_range[pos] = r;
+		return ESP_OK;
+	}
+
+	esp_err_t disable_inputs()
+	{
 		esp_err_t ret = ESP_OK;
-
-		range_in[0] = r1;
-		range_in[1] = r2;
-		range_in[2] = r3;
-		range_in[3] = r4;
-
-		uint8_t lower = steering[static_cast<uint8_t>(range_in[0])] | steering[static_cast<uint8_t>(range_in[1])] << 4;
-		uint8_t upper = steering[static_cast<uint8_t>(range_in[2])] | steering[static_cast<uint8_t>(range_in[3])] << 4;
 
 		ESP_GOTO_ON_ERROR(
 			expander_a.set_pins(0x00),
-			err, TAG, "Failed to reset relay a!");
-
+			err, TAG, "Failed to reset relays on a!");
 		ESP_GOTO_ON_ERROR(
 			expander_b.set_pins(0x00),
-			err, TAG, "Failed to reset relay b!");
-
-		vTaskDelay(pdMS_TO_TICKS(5));
-
-		ESP_GOTO_ON_ERROR(
-			expander_a.set_pins(lower),
-			err, TAG, "Failed to set relay a!");
-		ESP_GOTO_ON_ERROR(
-			expander_b.set_pins(upper),
-			err, TAG, "Failed to set relay b!");
+			err, TAG, "Failed to reset relays on b!");
 
 		return ESP_OK;
 
 	err:
-		ESP_LOGE(TAG, "Failed to set input ranges! Error: %s", esp_err_to_name(ret));
+		ESP_LOGE(TAG, "Failed to reset input relays! Error: %s", esp_err_to_name(ret));
+		return ret;
+	}
+
+	esp_err_t enable_inputs()
+	{
+		esp_err_t ret = ESP_OK;
+
+		uint8_t lower = range_to_expander_steering(an_in_range[0]) | range_to_expander_steering(an_in_range[1]) << 4;
+		uint8_t upper = range_to_expander_steering(an_in_range[2]) | range_to_expander_steering(an_in_range[3]) << 4;
+
+		ESP_GOTO_ON_ERROR(
+			expander_a.set_pins(lower),
+			err, TAG, "Failed to set relays on a!");
+		ESP_GOTO_ON_ERROR(
+			expander_b.set_pins(upper),
+			err, TAG, "Failed to set relays on b!");
+
+		return ESP_OK;
+
+	err:
+		ESP_LOGE(TAG, "Failed to set input relays! Error: %s", esp_err_to_name(ret));
 		return ret;
 	}
 
@@ -138,7 +179,7 @@ namespace Board
 	// write output
 	// write dig out
 	// recv input
-	esp_err_t execute(WriteCb &&callback)
+	esp_err_t execute(WriteCb &&callback, std::atomic_bool &exit)
 	{
 		spi_transaction_t *trx1 = nullptr;
 		spi_transaction_t *trx2 = nullptr;
@@ -265,7 +306,7 @@ namespace Board
 		while ((now = esp_timer_get_time()) < next)
 			NOOP;
 
-		write_digital(false, false, false, false);
+		write_digital(0b0000);
 		reset_outputs();
 
 		ESP_LOGI(TAG, "Operation: %d cycles, took %d us, equals %f us/c", int(iter), int(next - start), float(next - start) / iter);
@@ -276,17 +317,17 @@ namespace Board
 	//
 
 	/*/
-	In_Range range_decode(std::string s)
+	AnIn_Range range_decode(std::string s)
 	{
 		std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
 					   { return std::toupper(c); });
 		if (s == "MIN")
-			return In_Range::Min;
+			return AnIn_Range::Min;
 		if (s == "MID")
-			return In_Range::Med;
+			return AnIn_Range::Med;
 		if (s == "MAX")
-			return In_Range::Max;
-		return In_Range::OFF;
+			return AnIn_Range::Max;
+		return AnIn_Range::OFF;
 	}
 	//*/
 
@@ -300,25 +341,26 @@ namespace Board
 		dac.recv_trx();
 	}
 
-	uint8_t read_digital() const
+	void write_digital(uint32_t out)
 	{
-		static const uint32_t masks[4] = {BIT(dig_in[0] - 32), BIT(dig_in[1] - 32), BIT(dig_in[2] - 32), BIT(dig_in[3] - 32)};
-
-		uint32_t pins = REG_READ(GPIO_IN1_REG);
-
-		return (!!(pins & masks[0]) << 0) | (!!(pins & masks[1]) << 1) | (!!(pins & masks[2]) << 2) | (!!(pins & masks[3]) << 3);
+		out &= dg_out_mask;
+		REG_WRITE(GPIO_OUT_W1TS_REG, dg_out_lut_s[out]);
+		REG_WRITE(GPIO_OUT_W1TC_REG, dg_out_lut_r[out]);
 	}
 
-	void write_digital(uint8_t out) const
+#pragma GCC push_options
+#pragma GCC optimize("unroll-loops")
+	uint32_t read_digital()
 	{
-		static const uint32_t masks[4] = {BIT(dig_out[0]), BIT(dig_out[1]), BIT(dig_out[2]), BIT(dig_out[3])};
+		uint32_t in = REG_READ(GPIO_IN1_REG);
+		uint32_t ret = 0;
 
-		uint32_t sets = ((out & 0b0001) ? masks[0] : 0) | ((out & 0b0010) ? masks[1] : 0) | ((out & 0b0100) ? masks[2] : 0) | ((out & 0b1000) ? masks[3] : 0);
-		uint32_t rsts = (!(out & 0b0001) ? masks[0] : 0) | (!(out & 0b0010) ? masks[1] : 0) | (!(out & 0b0100) ? masks[2] : 0) | (!(out & 0b1000) ? masks[3] : 0);
+		for (size_t b = 0; b < dg_in_num; ++b)
+			ret |= !!(in & BIT(dig_in[b] - 32)) << b;
 
-		REG_WRITE(GPIO_OUT_W1TS_REG, sets);
-		REG_WRITE(GPIO_OUT_W1TC_REG, rsts);
+		return ret;
 	}
+#pragma GCC pop_options
 
 	void test()
 	{
@@ -348,7 +390,15 @@ namespace Board
 
 	//
 
-	float input_multiplier(Input in) const
+	inline uint8_t range_to_expander_steering(AnIn_Range r)
+	{
+		static constexpr uint8_t steering[] = {0b0000, 0b0001, 0b0010, 0b0100};
+		return steering[static_cast<uint8_t>(r)];
+	}
+
+	/*/
+	// you are basically a bug
+	float input_multiplier(Input in)
 	{
 		constexpr float volt_mul[4] = {0, 1, 10, 100};	  // min range => min attn
 		constexpr float curr_mul[4] = {5, 1000, 100, 10}; // min range => max gain
@@ -370,6 +420,7 @@ namespace Board
 			return 0;
 		}
 	}
+	//*/
 
 	inline int16_t conv_meas(MCP3204::out_t in)
 	{

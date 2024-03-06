@@ -15,7 +15,7 @@ using namespace std::literals;
 #include <esp_log.h>
 #include <esp_system.h>
 
-// #include <esp_http_server.h>
+#include "to_integer.h"
 
 #include "rigtorp/SPSCQueue.h"
 using namespace rigtorp;
@@ -29,13 +29,13 @@ using namespace Executing;
 
 static const char *TAG = "WebServer";
 
-NLOHMANN_JSON_SERIALIZE_ENUM(In_Range,
-							 {
-								 {In_Range::OFF, "off"},
-								 {In_Range::Min, "min"},
-								 {In_Range::Med, "med"},
-								 {In_Range::Max, "max"},
-							 })
+// NLOHMANN_JSON_SERIALIZE_ENUM(AnIn_Range,
+// 							 {
+// 								 {AnIn_Range::OFF, "off"},
+// 								 {AnIn_Range::Min, "min"},
+// 								 {AnIn_Range::Med, "med"},
+// 								 {AnIn_Range::Max, "max"},
+// 							 })
 
 //
 
@@ -52,6 +52,156 @@ void str_to_lower(std::string &s)
 				   [](unsigned char c)
 				   { return std::tolower(c); });
 }
+
+//
+
+auto parse_query(httpd_req_t *r)
+{
+	std::map<std::string, std::string> ret;
+	size_t qr_len = httpd_req_get_url_query_len(r) + 1;
+	std::string query(qr_len, '\0');
+	httpd_req_get_url_query_str(r, query.data(), qr_len);
+	query.erase(query.find('\0'));
+	size_t pos = 0;
+	do
+	{
+		size_t maxlen = query.find('&', pos); // find end of current param
+		if (maxlen == std::string::npos)
+			maxlen = query.length();
+		size_t middle = query.find('=', pos); // find break of current param
+		if (middle > maxlen)				  // no value, key only
+		{
+			std::string key = query.substr(pos, maxlen - pos);
+			ret.emplace(std::move(key), "");
+		}
+		else // key and value
+		{
+			std::string key = query.substr(pos, middle - pos);
+			std::string val = query.substr(middle + 1, maxlen - middle - 1);
+			ret.emplace(std::move(key), std::move(val));
+		}
+		pos = maxlen + 1;
+	} //
+	while (pos <= query.length());
+	// ret.erase("");
+	return ret;
+}
+
+//
+
+class SocketReader
+{
+	static constexpr int BUF_SIZE = 1024;
+
+public:
+	httpd_req_t *req;
+	esp_err_t err = ESP_OK;
+
+private:
+	char buffer[BUF_SIZE];
+	size_t dataLen = 0;
+	size_t ptr = 0;
+	// size_t totalOut = 0;
+	// size_t totalIn = 0;
+
+	void recv()
+	{
+		int ret = httpd_req_recv(req, buffer, BUF_SIZE);
+
+		if (ret < 0) // error
+		{
+			err = ret;
+			return;
+		}
+		dataLen = ret;
+		ptr = 0;
+		// totalOut = totalIn;
+		// totalIn += dataLen;
+	}
+
+public:
+	SocketReader(httpd_req_t *r) : req(r) {}
+	~SocketReader() = default;
+
+	class iterator
+	{
+		friend class SocketReader;
+
+	public:
+		using iterator_category = std::input_iterator_tag;
+		using value_type = char;
+		using difference_type = std::ptrdiff_t;
+		using pointer = char *;
+		using reference = char &;
+
+	private:
+		SocketReader *parent;
+
+		iterator(SocketReader *p) : parent(p) {}
+
+	public:
+		~iterator() = default;
+
+	public:
+		char operator*() const
+		{
+			if (parent->ptr >= parent->dataLen) [[unlikely]]
+				return '\0';
+			return parent->buffer[parent->ptr];
+		}
+
+		iterator &operator++()
+		{
+			if (parent->ptr >= parent->dataLen)
+				parent->recv();
+			return *this;
+		}
+
+		// iterator operator++(int) // does not exist, iterator pos is inside the parent
+		// {
+		// 	Iterator tmp = *this;
+		// 	++(*this);
+		// 	return tmp;
+		// }
+
+		bool operator==(const iterator &other) const
+		{
+			if (parent == other.parent) // If the same owner, then the same
+				return true;
+
+			if (other.parent == nullptr) // I am begin, other is end
+			{
+				if (parent->ptr >= parent->dataLen)
+					return true;
+			}
+			if (parent == nullptr) // I am end (who TF uses this order?)
+			{
+				if (other.parent->ptr >= other.parent->dataLen)
+					return true;
+			}
+
+			return false; // Completely different owners
+		}
+
+		// bool operator!=(const Iterator &other) const
+		// {
+		// 	return !(*this == other);
+		// }
+	};
+
+public:
+	iterator begin()
+	{
+		dataLen = 0;
+		ptr = 0;
+		return iterator(this);
+	}
+
+	iterator end()
+	{
+		return iterator(nullptr);
+	}
+};
 
 //
 
@@ -72,70 +222,81 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 
 static esp_err_t settings_handler(httpd_req_t *req)
 {
-	std::string post(req->content_len, '\0');
+	ESP_LOGV(TAG, "Req len: %i" PRIu32, req->content_len);
 
-	int ret = httpd_req_recv(req, post.data(), req->content_len);
+	// std::string post(req->content_len, '\0'); // +- 1?
+	// int ret = httpd_req_recv(req, post.data(), req->content_len);
 
-	if (ret <= 0) // failed to read
-	{
-		if (ret == HTTPD_SOCK_ERR_TIMEOUT)
-			httpd_resp_send_408(req);
+	// if (ret <= 0) // failed to read
+	// {
+	// 	if (ret == HTTPD_SOCK_ERR_TIMEOUT)
+	// 		httpd_resp_send_408(req);
+	// 	return ESP_FAIL;
+	// }
 
-		return ESP_FAIL;
-	}
-
-	ESP_LOGV(TAG, "%s", post.c_str());
+	// ESP_LOGV(TAG, "%s", post.c_str());
 
 	Executing::Program program;
 	std::vector<Generator> generators;
 	std::vector<std::string> errors;
 
-	if (str_is_ascii(post))
+	//	if (str_is_ascii(post))
+	//	{
+	SocketReader reader(req);
+
+	const json q = json::parse(reader.begin(), reader.end(), nullptr, false, true);
+	//	post.clear();
+
+	if (reader.err) // failed to read
 	{
-		const json q = json::parse(post, nullptr, false);
-		if (!q.is_discarded())
+		if (reader.err == HTTPD_SOCK_ERR_TIMEOUT)
+			httpd_resp_send_408(req);
+		return ESP_FAIL;
+	}
+
+	if (!q.is_discarded())
+	{
+		//*/
+		if (q.contains("program") && q.at("program").is_string())
 		{
-			//*/
-			if (q.contains("program") && q.at("program").is_string())
-			{
-				// parse program
-				const std::string &prg = q.at("program").get_ref<const json::string_t &>();
-				program.parse(prg, errors);
-			}
-			//*/
+			// parse program
+			const std::string &prg = q.at("program").get_ref<const json::string_t &>();
+			program.parse(prg, errors);
+		}
+		//*/
 
-			//*/
-			if (q.contains("generators") && q.at("generators").is_array())
-			{
-				// parse generators
-				size_t count = q.at("generators").size();
-				// count = std::min(count, (size_t)16);
-				generators.reserve(count);
+		//*/
+		if (q.contains("generators") && q.at("generators").is_array())
+		{
+			// parse generators
+			size_t count = q.at("generators").size();
+			// count = std::min(count, (size_t)16);
+			generators.reserve(count);
 
-				for (auto &[key, val] : q.at("generators").items())
+			for (auto &[key, val] : q.at("generators").items())
+			{
+				try
 				{
-					try
-					{
-						Generator g = val.get<Generator>();
-						generators.push_back(std::move(g));
-					}
-					catch (json::exception &e)
-					{
-						generators.emplace_back();
-						errors.push_back("Generator #"s + key + " failed to parse!");
-						ESP_LOGE(TAG, "%s", e.what());
-					}
+					Generator g = val.get<Generator>();
+					generators.push_back(std::move(g));
+				}
+				catch (json::exception &e)
+				{
+					generators.emplace_back();
+					errors.push_back("Generator #"s + key + " failed to parse!");
+					ESP_LOGE(TAG, "%s", e.what());
 				}
 			}
-			//*/
 		}
-		else
-			errors.push_back("JSON is invalid!");
+		//*/
 	}
 	else
-		errors.push_back("JSON must be ASCII!");
+		errors.push_back("JSON is invalid!");
+	//	}
+	//	else
+	//		errors.push_back("JSON must be ASCII!");
 
-	board->move_config(program, generators);
+	Board::move_config(program, generators);
 
 	if (!errors.empty())
 	{
@@ -159,7 +320,9 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	res["data"]["unit"]["in2"] = "V";
 	res["data"]["unit"]["in3"] = "V";
 	res["data"]["unit"]["in4"] = "mA";
+
 	std::string out = res.dump();
+	res.clear();
 	httpd_resp_send(req, out.c_str(), out.length());
 
 	return ESP_OK;
@@ -176,7 +339,8 @@ void board_io_task(void *arg)
 			return queue->try_push(in);
 		};
 
-		board->execute(std::move(writefcn));
+		std::atomic_bool sth;
+		Board::execute(std::move(writefcn), sth);
 	}
 	vTaskSuspend(NULL);
 	// wait for external wakeup
@@ -188,9 +352,19 @@ static esp_err_t io_handler(httpd_req_t *req)
 	httpd_resp_set_status(req, HTTPD_200);
 	httpd_resp_set_type(req, "application/octet-stream");
 
-	ESP_LOGI(TAG, "Preparing queue...");
+	auto qr = parse_query(req);
 
-	constexpr size_t BUF_LEN = 1024;
+	size_t BUF_LEN = 0;
+	if (auto it = qr.find("bl"); it != qr.end())
+		try_parse_integer(it->second, BUF_LEN);
+
+	if (BUF_LEN == 0)
+		BUF_LEN = 1024;
+
+	if (BUF_LEN > 8 * 1024)
+		BUF_LEN = 8 * 1024;
+
+	ESP_LOGI(TAG, "Preparing queue...");
 
 	SPSCQueue<int16_t> queue(BUF_LEN * 32 - 1);
 

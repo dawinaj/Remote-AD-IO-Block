@@ -111,7 +111,6 @@ namespace Executing
 	class Program
 	{
 		Scope scope;
-		bool prgValid;
 
 	public:
 		Program() = default;
@@ -119,7 +118,7 @@ namespace Executing
 		// DEFAULT_CP_CTOR(Program)
 		DEFAULT_MV_CTOR(Program)
 
-		void parse(const std::string &, std::vector<std::string> &);
+		bool parse(const std::string &, std::vector<std::string> &);
 
 		CmdPtr getCmd();
 		void reset();

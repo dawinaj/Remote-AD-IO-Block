@@ -62,7 +62,6 @@ void init_spi()
 }
 
 //
-Board *board = nullptr;
 
 extern "C" void app_main(void)
 {
@@ -92,7 +91,7 @@ extern "C" void app_main(void)
 	init_spi();
 	ESP_LOGI(TAG, "SPI init done");
 
-	board = new Board();
+	Board::init();
 
 	vTaskDelay(pdMS_TO_TICKS(1000));
 	// ESP_LOGI(TAG, "Starting testing the relays");
@@ -120,10 +119,10 @@ extern "C" void app_main(void)
 	/*/
 	ESP_LOGI(TAG, "Starting calibrating the inputs");
 	int16_t val[4] = {};
-	board->set_input_range(Input::In1, In_Range::Min);
-	board->set_input_range(Input::In2, In_Range::Min);
-	board->set_input_range(Input::In3, In_Range::Min);
-	board->set_input_range(Input::In4, In_Range::Min);
+	board->set_input_range(Input::In1, AnIn_Range::Min);
+	board->set_input_range(Input::In2, AnIn_Range::Min);
+	board->set_input_range(Input::In3, AnIn_Range::Min);
+	board->set_input_range(Input::In4, AnIn_Range::Min);
 	while (1)
 	{
 		board->measure_inputs({Input::In1, Input::In2, Input::In3, Input::In4}, val, 4, 1, 20);
@@ -161,7 +160,7 @@ extern "C" void app_main(void)
 	}
 	//*/
 
-	//return;
+	// return;
 
 	httpd_handle_t server = start_webserver();
 

@@ -105,7 +105,7 @@ public:
 
 	//
 
-	esp_err_t acquire_spi(TickType_t timeout = portMAX_DELAY)
+	esp_err_t acquire_spi(TickType_t timeout = portMAX_DELAY) const
 	{
 		ESP_RETURN_ON_ERROR(
 			spi_device_acquire_bus(spi_hdl, timeout),
@@ -116,7 +116,7 @@ public:
 		return ESP_OK;
 	}
 
-	esp_err_t release_spi()
+	esp_err_t release_spi() const
 	{
 		spi_device_release_bus(spi_hdl); // return void
 		// spi_acq = false;
@@ -124,7 +124,7 @@ public:
 	}
 
 	//*/
-	out_t get_signed_raw(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE, size_t scnt = 1)
+	out_t get_signed_raw(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE, size_t scnt = 1) const
 	{
 
 		spi_transaction_t spi_trx = make_trx(chnl, rdmd);
@@ -142,7 +142,7 @@ public:
 		return sum / scnt; //(sum + ((sum < 0) ? -scnt : scnt) / 2) / scnt;
 	}
 
-	float get_float_volt(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE, size_t scnt = 1)
+	float get_float_volt(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE, size_t scnt = 1) const
 	{
 		spi_transaction_t trx1 = make_trx(chnl, rdmd);
 		// spi_transaction_t trx2 = trx1;
@@ -178,7 +178,7 @@ public:
 	}
 	//*/
 
-	inline esp_err_t send_trx(spi_transaction_t &trx)
+	inline esp_err_t send_trx(spi_transaction_t &trx) const
 	{
 		esp_err_t ret = ESP_OK;
 
@@ -192,7 +192,7 @@ public:
 		return ret;
 	}
 
-	inline esp_err_t recv_trx(TickType_t timeout = portMAX_DELAY)
+	inline esp_err_t recv_trx(TickType_t timeout = portMAX_DELAY) const
 	{
 		esp_err_t ret = spi_device_polling_end(spi_hdl, timeout);
 
@@ -203,7 +203,7 @@ public:
 		return ret;
 	}
 
-	inline out_t parse_trx(const spi_transaction_t &trx)
+	inline out_t parse_trx(const spi_transaction_t &trx) const
 	{
 		uout_t out = SPI_SWAP_DATA_RX(*reinterpret_cast<const uint32_t *>(trx.rx_data), B);
 
@@ -217,7 +217,7 @@ public:
 		return out;
 	}
 
-	spi_transaction_t make_trx(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE)
+	spi_transaction_t make_trx(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE) const
 	{
 		// Request/Response format (tx/rx).
 		//
