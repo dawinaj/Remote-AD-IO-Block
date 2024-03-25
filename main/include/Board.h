@@ -42,20 +42,25 @@ enum class AnIn_Range : uint8_t
 
 namespace Board
 {
-	static constexpr const char *const TAG = "IOBoard";
+	constexpr const char *const TAG = "IOBoard";
 	// static constexpr size_t BUF_CNT = 2;
 	// static constexpr size_t BUF_LEN = 1024 * 4;
 
 	using WriteCb = std::function<bool(int16_t)>;
 
-	static constexpr float v_ref = 4.096f;
+	constexpr float u_ref = 4.096;
+	constexpr float ccvs_transresistance = 1.0;
+	constexpr float vccs_transconductance = 0.1; // or 0.01?
+
+	// constexpr int64_t volt_mul = 1'000;
+	// constexpr int64_t curr_mul = 1'000'000;
 
 	esp_err_t init();
 	esp_err_t deinit();
 
-	esp_err_t set_input_range(Input, AnIn_Range);
-	esp_err_t disable_inputs();
-	esp_err_t enable_inputs();
+	// esp_err_t set_input_range(Input, AnIn_Range);
+	// esp_err_t disable_inputs();
+	// esp_err_t enable_inputs();
 
 	esp_err_t execute(WriteCb &&, std::atomic_bool &);
 

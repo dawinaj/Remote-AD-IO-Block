@@ -5,8 +5,9 @@ idf_component_register(
 	"src/wifi.cpp"
 	"src/webserver.cpp"
 	"src/json_helper.cpp"
-	"src/Board.cpp"
 	"src/Interpreter.cpp"
+	"src/Board.cpp"
+	"src/Communicator.cpp"
 	INCLUDE_DIRS
 	"."
 	"include/"

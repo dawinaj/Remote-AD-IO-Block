@@ -29,9 +29,13 @@ class MCP4xxx
 	static constexpr const char *const TAG = "MCP4xxx";
 
 public:
-	using in_t = std::conditional_t<(B <= 8), uint8_t, uint16_t>;
+	using in_t = uint16_t;
 	static constexpr mcp_dac_bits_t bits = B;
 	static constexpr mcp_adc_channels_t channels = C;
+
+	static constexpr in_t ref = (1u << B);
+	static constexpr in_t max = ref - 1;
+	static constexpr in_t min = 0;
 
 private:
 	spi_device_handle_t spi_hdl;
@@ -42,9 +46,6 @@ private:
 	static constexpr in_t inp_mask = (1u << B) - 1;
 
 public:
-	static constexpr in_t max = inp_mask;
-	static constexpr in_t min = 0;
-
 	MCP4xxx(spi_host_device_t spihost, gpio_num_t csgpio, int clkhz = 10'000'000, float rv = 5.0f, bool gx2 = false, bool rfb = false) : ref_volt(rv), gain_bit(!gx2), refbuf_bit(rfb)
 	{
 		esp_err_t ret = ESP_OK;
@@ -104,17 +105,6 @@ public:
 	{
 		spi_device_release_bus(spi_hdl); // return void
 		return ESP_OK;
-	}
-
-	void set_float_volt(bool chnl, float flv) const
-	{
-		spi_transaction_t trx = make_trx(chnl);
-
-		in_t in = std::min(flv / ref_volt, 1.0f) * max;
-
-		write_trx(trx, in);
-		send_trx(trx);
-		recv_trx();
 	}
 
 	void shutdown_channel(bool chnl) const

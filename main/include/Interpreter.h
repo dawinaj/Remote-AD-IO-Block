@@ -20,15 +20,28 @@ namespace Executing
 	{
 		NOP = 0,
 
-		ANIN = 11,
-		ANOUT = 12,
-		ANGEN = 13,
+		AIRDF = 11,
+		AIRDM = 12,
+		AIRDU = 13,
 
-		DGIN = 21,
-		DGOUT = 22,
+		AIEN = 21,
+		AIDIS = 22,
+		AIRNG = 23,
+
+		AOVAL = 31,
+		AOGEN = 32,
+
+		DIRD = 51,
+
+		DOWR = 71,
+		DOSET = 72,
+		DORST = 73,
+		DOAND = 74,
+		DOXOR = 75,
 
 		DELAY = 100,
-		RANGE = 101,
+		GETTM = 101,
+
 	};
 
 	class CmdStatement

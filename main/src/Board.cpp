@@ -12,14 +12,18 @@
 
 #define NOOP __asm__ __volatile__("nop")
 
+using Executing::Command;
+
 namespace Board
 {
+	// SPECIFICATION
 	constexpr size_t an_in_num = 4;
 	constexpr size_t an_out_num = 2;
 
 	constexpr size_t dg_in_num = 4;
 	constexpr size_t dg_out_num = 4;
 
+	// HARDWARE SETUP
 	constexpr std::array<gpio_num_t, dg_in_num> dig_in = {GPIO_NUM_34, GPIO_NUM_35, GPIO_NUM_36, GPIO_NUM_39};
 	constexpr std::array<gpio_num_t, dg_out_num> dig_out = {GPIO_NUM_4, GPIO_NUM_25, GPIO_NUM_26, GPIO_NUM_27};
 
@@ -29,20 +33,24 @@ namespace Board
 	MCP3204 adc(SPI3_HOST, GPIO_NUM_5, 2'000'000);
 	MCP4922 dac(SPI2_HOST, GPIO_NUM_15, 20'000'000);
 
+	// STATE MACHINE
+	uint32_t dg_out_state = 0;
 	std::array<AnIn_Range, an_in_num> an_in_range;
-
-	std::array<spi_transaction_t, an_in_num> trx_in;
-	std::array<spi_transaction_t, an_out_num> trx_out;
-
 	std::vector<Generator> generators;
 	Executing::Program program;
 
-	// LUT
+	//================================//
+	//            HELPERS             //
+	//================================//
+	std::array<spi_transaction_t, an_in_num> trx_in;
+	std::array<spi_transaction_t, an_out_num> trx_out;
+
+	// CONSTANTS
 	constexpr uint32_t dg_out_mask = (1 << dg_out_num) - 1;
 	constexpr uint32_t dg_in_mask = (1 << dg_in_num) - 1;
 
+	// LUT
 	constexpr size_t dg_out_lut_sz = 1 << dg_out_num;
-
 	constexpr std::array<uint32_t, dg_out_lut_sz> dg_out_lut_s = []()
 	{
 		std::array<uint32_t, dg_out_lut_sz> ret = {};
@@ -52,7 +60,6 @@ namespace Board
 					ret[in] |= BIT(dig_out[b]);
 		return ret;
 	}();
-
 	constexpr std::array<uint32_t, dg_out_lut_sz> dg_out_lut_r = []()
 	{
 		std::array<uint32_t, dg_out_lut_sz> ret = {};
@@ -63,59 +70,100 @@ namespace Board
 		return ret;
 	}();
 
-	void reset_outputs();
-	inline uint8_t range_to_expander_steering(AnIn_Range);
+	//================================//
+	//          DECLARATIONS          //
+	//================================//
+
+	//================================//
+	//         IMPLEMENTATION         //
+	//================================//
+
+	//----------------//
+	//    HELPERS     //
+	//----------------//
+
+	inline uint8_t range_to_expander_steering(AnIn_Range r)
+	{
+		static constexpr uint8_t steering[] = {0b0000, 0b0001, 0b0010, 0b0100};
+		return steering[static_cast<uint8_t>(r)];
+	}
+
+	template <typename num_t, int32_t mul = 1>
+	num_t adc_to_value(Input in, MCP3204::out_t val)
+	{
+		// Divider settings:       Min: 1V=>1V, Med: 10V=>1V, Max: 100V=>1V
+		// Gains settings: R=1Ohm; Min: 1mA=>1V, Med: 10mA=>1V, Max: 100mA=>1V
+		constexpr int32_t volt_divs[4] = {0, 1, 10, 100};	  // ratios of dividers | min range => min attn
+		constexpr int32_t curr_gains[4] = {5, 1000, 100, 10}; // gains of instr.amp | min range => max gain
+
+		// According to docs, Dout = 4096 * Uin/Uref. Assuming Uref=4096mV, Uin=Dout.
+		// Important to note, values are !stretched! and shifted!. 2048 = 0V, 0 = -4096mV, 4096 = 4096mV
+
+		constexpr int32_t offset = MCP3204::ref / 2;
+
+		constexpr num_t ratio = u_ref * mul / offset;
+
+		int32_t bipolar = val - offset;
+
+		switch (in)
+		{
+		case Input::In1:
+			return bipolar * ratio * volt_divs[static_cast<size_t>(an_in_range[0])];
+		case Input::In2:
+			return bipolar * ratio * volt_divs[static_cast<size_t>(an_in_range[1])];
+		case Input::In3:
+			return bipolar * ratio * volt_divs[static_cast<size_t>(an_in_range[2])];
+		case Input::In4:
+			return bipolar * ratio / curr_gains[static_cast<size_t>(an_in_range[3])] / ccvs_transresistance;
+		default:
+			return 0;
+		}
+	}
+
+	/*/
+AnIn_Range range_decode(std::string s)
+{
+	std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
+				   { return std::toupper(c); });
+	if (s == "MIN")
+		return AnIn_Range::Min;
+	if (s == "MID")
+		return AnIn_Range::Med;
+	if (s == "MAX")
+		return AnIn_Range::Max;
+	return AnIn_Range::OFF;
+}
+//*/
+
+	MCP4922::in_t value_to_dac(Output out, float val)
+	{
+		constexpr float maxabs = u_ref / 2 / 2 * 10; // bipolar and halved, out= -1V -- 1V, *10
+		constexpr int32_t offset = MCP4922::ref / 2;
+		constexpr float ratio = offset / maxabs;
+
+		if (out == Output::None || out == Output::Inv) [[unlikely]]
+			return 0;
+
+		if (out == Output::Out2)
+			val /= vccs_transconductance;
+
+		if (val >= maxabs) [[unlikely]]
+			return MCP4922::max;
+		if (val <= -maxabs) [[unlikely]]
+			return MCP4922::min;
+
+		return static_cast<int32_t>(std::round(val * ratio)) + offset;
+	}
 
 	//
 
-	esp_err_t init()
-	{
-		for (size_t i = 0; i < an_in_num; ++i)
-			an_in_range[i] = AnIn_Range::OFF;
+	//----------------//
+	//    BACKEND     //
+	//----------------//
 
-		for (size_t i = 0; i < an_in_num; ++i)
-			trx_in[i] = adc.make_trx(i);
+	// ANALOG
 
-		for (size_t i = 0; i < an_out_num; ++i)
-			trx_out[i] = adc.make_trx(an_out_num - i - 1); // reversed, because reversed chip
-
-		for (size_t i = 0; i < dg_in_num; ++i)
-			gpio_set_direction(dig_in[i], GPIO_MODE_INPUT);
-
-		for (size_t i = 0; i < dg_out_num; ++i)
-			gpio_set_direction(dig_out[i], GPIO_MODE_OUTPUT);
-
-		// execute
-
-		expander_a.set_pins(0x00);
-		expander_b.set_pins(0x00);
-
-		adc.acquire_spi();
-		dac.acquire_spi();
-
-		reset_outputs();
-
-		ESP_LOGI(TAG, "Constructed!");
-
-		return ESP_OK;
-	}
-
-	esp_err_t deinit()
-	{
-		adc.release_spi();
-		dac.release_spi();
-
-		expander_a.set_pins(0x00);
-		expander_b.set_pins(0x00);
-
-		ESP_LOGI(TAG, "Destructed!");
-
-		return ESP_OK;
-	}
-
-	//
-
-	esp_err_t set_input_range(Input in, AnIn_Range r)
+	esp_err_t analog_input_range(Input in, AnIn_Range r)
 	{
 		if (in == Input::None || in == Input::Inv) [[unlikely]]
 			return ESP_ERR_INVALID_ARG;
@@ -125,7 +173,7 @@ namespace Board
 		return ESP_OK;
 	}
 
-	esp_err_t disable_inputs()
+	esp_err_t analog_inputs_disable()
 	{
 		esp_err_t ret = ESP_OK;
 
@@ -143,7 +191,7 @@ namespace Board
 		return ret;
 	}
 
-	esp_err_t enable_inputs()
+	esp_err_t analog_inputs_enable()
 	{
 		esp_err_t ret = ESP_OK;
 
@@ -164,53 +212,264 @@ namespace Board
 		return ret;
 	}
 
+	MCP3204::out_t analog_input_read(Input in)
+	{
+		if (in == Input::None || in == Input::Inv) [[unlikely]]
+			return 0;
+
+		spi_transaction_t &trx = trx_in[static_cast<size_t>(in) - 1];
+		adc.send_trx(trx);
+		adc.recv_trx();
+		return adc.parse_trx(trx);
+	}
+
+	void analog_output_write(Output out, MCP4922::in_t val)
+	{
+		if (out == Output::None || out == Output::Inv) [[unlikely]]
+			return;
+
+		spi_transaction_t &trx = trx_out[static_cast<size_t>(out) - 1];
+		dac.write_trx(trx, val);
+		dac.send_trx(trx);
+		dac.recv_trx();
+	}
+
+	void analog_outputs_reset()
+	{
+		analog_output_write(Output::Out1, MCP4922::ref / 2);
+		analog_output_write(Output::Out2, MCP4922::ref / 2);
+	}
+
+	// DIGITAL OUTPUT
+
+	void digital_outputs_to_registers()
+	{
+		dg_out_state &= dg_out_mask;
+		REG_WRITE(GPIO_OUT_W1TS_REG, dg_out_lut_s[dg_out_state]);
+		REG_WRITE(GPIO_OUT_W1TC_REG, dg_out_lut_r[dg_out_state]);
+	}
+
+	void digital_outputs_wr(uint32_t val)
+	{
+		dg_out_state = val;
+		digital_outputs_to_registers();
+	}
+	void digital_outputs_set(uint32_t val)
+	{
+		dg_out_state |= val;
+		digital_outputs_to_registers();
+	}
+	void digital_outputs_rst(uint32_t val)
+	{
+		dg_out_state &= ~val;
+		digital_outputs_to_registers();
+	}
+	void digital_outputs_and(uint32_t val)
+	{
+		dg_out_state &= val;
+		digital_outputs_to_registers();
+	}
+	void digital_outputs_xor(uint32_t val)
+	{
+		dg_out_state ^= val;
+		digital_outputs_to_registers();
+	}
+
+	// DIGITAL INPUT
+
+#pragma GCC push_options
+#pragma GCC optimize("unroll-loops")
+	uint32_t digital_inputs_read()
+	{
+		uint32_t in = REG_READ(GPIO_IN1_REG);
+		uint32_t ret = 0;
+
+		for (size_t b = 0; b < dg_in_num; ++b)
+			ret |= !!(in & BIT(dig_in[b] - 32)) << b;
+
+		return ret;
+	}
+#pragma GCC pop_options
+
+	//----------------//
+	//    FRONTEND    //
+	//----------------//
+
+	// INIT
+
+	esp_err_t cleanup()
+	{
+		for (size_t i = 0; i < an_in_num; ++i)
+			an_in_range[i] = AnIn_Range::OFF;
+
+		analog_inputs_disable();
+
+		analog_outputs_reset();
+
+		digital_outputs_wr(0);
+
+		return ESP_OK;
+	}
+
+	esp_err_t init()
+	{
+		for (size_t i = 0; i < dg_in_num; ++i)
+			gpio_set_direction(dig_in[i], GPIO_MODE_INPUT);
+
+		for (size_t i = 0; i < dg_out_num; ++i)
+			gpio_set_direction(dig_out[i], GPIO_MODE_OUTPUT);
+
+		for (size_t i = 0; i < an_in_num; ++i)
+			trx_in[i] = adc.make_trx(i);
+
+		for (size_t i = 0; i < an_out_num; ++i)
+			trx_out[i] = adc.make_trx(an_out_num - i - 1); // reversed, because rotated chip
+
+		adc.acquire_spi();
+		dac.acquire_spi();
+
+		cleanup();
+
+		ESP_LOGI(TAG, "Constructed!");
+
+		return ESP_OK;
+	}
+
+	esp_err_t deinit()
+	{
+		cleanup();
+
+		adc.release_spi();
+		dac.release_spi();
+
+		ESP_LOGI(TAG, "Destructed!");
+
+		return ESP_OK;
+	}
+
+	// INTERFACE
+
 	void move_config(Executing::Program &p, std::vector<Generator> &g)
 	{
 		program = std::move(p);
 		generators = std::move(g);
 	}
 
-	// general execution plan:
-	// wait for trigger
-	// in loop:
-	// send input
-	// read dig in
-	// write output
-	// write output
-	// write dig out
-	// recv input
 	esp_err_t execute(WriteCb &&callback, std::atomic_bool &exit)
 	{
-		spi_transaction_t *trx1 = nullptr;
-		spi_transaction_t *trx2 = nullptr;
-		Generator *gen1 = nullptr;
-		Generator *gen2 = nullptr;
+		cleanup();
+		program.reset();
 
-		int64_t start = esp_timer_get_time();
-		int64_t now = start;
-		int64_t next = now;
+		MCP4922::in_t outval = 0;
 
-		size_t iter = 0;
+		int64_t now = esp_timer_get_time();
+		int64_t start = now + 1;
+		int64_t waitfor = start;
 
-		goto exit;
+		while (true)
+		{
+			Executing::CmdPtr cmd = program.getCmd();
+
+			if (cmd == Executing::nullcmd)
+				break;
+
+			Input in = static_cast<Input>(cmd->port);
+			Output out = static_cast<Output>(cmd->port);
+
+			// prepare value for output
+			switch (cmd->cmd)
+			{
+			case Command::AOVAL:
+				outval = value_to_dac(out, cmd->arg.f);
+				break;
+			case Command::AOGEN:
+			{
+				float val = (cmd->arg.u < generators.size()) ? generators[cmd->arg.u].get(waitfor - start) : 0;
+				outval = value_to_dac(out, val);
+				break;
+			}
+			default:
+				break;
+			}
+
+			// wait for precise synchronization
+			while ((now = esp_timer_get_time()) < waitfor)
+				NOOP;
+
+			// actual execution
+			switch (cmd->cmd)
+			{
+			case Command::DELAY:
+				waitfor += cmd->arg.u;
+				break;
+			case Command::GETTM:
+				waitfor = now + 1;
+				break;
+
+			case Command::DIRD:
+				// uint32_t res = digital_inputs_read();
+				// write to buffer
+				break;
+
+			case Command::DOWR:
+				digital_outputs_wr(cmd->arg.u);
+				break;
+			case Command::DOSET:
+				digital_outputs_set(cmd->arg.u);
+				break;
+			case Command::DORST:
+				digital_outputs_rst(cmd->arg.u);
+				break;
+			case Command::DOAND:
+				digital_outputs_and(cmd->arg.u);
+				break;
+			case Command::DOXOR:
+				digital_outputs_xor(cmd->arg.u);
+				break;
+
+			case Command::AIRDF:
+			{
+				MCP3204::out_t rd = analog_input_read(in);
+				float val = adc_to_value<float>(in, rd);
+				// write to buf
+				break;
+			}
+			case Command::AIRDM:
+			{
+				MCP3204::out_t rd = analog_input_read(in);
+				int32_t val = adc_to_value<int32_t, 1'000>(in, rd);
+				// write to buf
+				break;
+			}
+			case Command::AIRDU:
+			{
+				MCP3204::out_t rd = analog_input_read(in);
+				int32_t val = adc_to_value<int32_t, 1'000'000>(in, rd);
+				// write to buf
+				break;
+			}
+
+			case Command::AOVAL:
+			case Command::AOGEN:
+				analog_output_write(out, outval);
+				break;
+
+			case Command::AIEN:
+				analog_inputs_enable();
+				break;
+			case Command::AIDIS:
+				analog_inputs_disable();
+				break;
+			case Command::AIRNG:
+				analog_input_range(in, static_cast<AnIn_Range>(cmd->arg.u));
+				break;
+
+			default:
+				break;
+			}
+		}
 		//
 		/*/
-			size_t in_idx = 0;
-			size_t rpt = 0;
-
-			Input in = Input::None;
-			spi_transaction_t *trxin = nullptr;
-
-			start = next; // reset deltatime
-
-			float gen1_val = gen1->get(0);
-			float gen2_val = gen2->get(0);
-
-			bool dig_out[4] = {true, true, true, true};
-			int64_t dig_next[4] = {start, start, start, start};
-			size_t dig_idx[4] = {0, 0, 0, 0};
-
-			size_t iter = 0;
 			while (iter < general.sample_count)
 			{
 				// setup
@@ -241,11 +500,7 @@ namespace Board
 
 				// lessago
 
-				if (in != Input::None)
-				{
-					trxin = &trx_in[static_cast<uint8_t>(in) - 1];
-					adc.send_trx(*trxin);
-				}
+
 
 				if (exec.do_dgtl_inp)
 					meas = read_digital();
@@ -303,157 +558,14 @@ namespace Board
 
 	exit:
 
-		while ((now = esp_timer_get_time()) < next)
+		while (esp_timer_get_time() < waitfor)
 			NOOP;
 
-		write_digital(0b0000);
-		reset_outputs();
+		cleanup();
 
-		ESP_LOGI(TAG, "Operation: %d cycles, took %d us, equals %f us/c", int(iter), int(next - start), float(next - start) / iter);
+		// ESP_LOGI(TAG, "Operation: %d cycles, took %d us, equals %f us/c", int(iter), int(next - start), float(next - start) / iter);
 
 		return ESP_OK;
 	}
 
-	//
-
-	/*/
-	AnIn_Range range_decode(std::string s)
-	{
-		std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
-					   { return std::toupper(c); });
-		if (s == "MIN")
-			return AnIn_Range::Min;
-		if (s == "MID")
-			return AnIn_Range::Med;
-		if (s == "MAX")
-			return AnIn_Range::Max;
-		return AnIn_Range::OFF;
-	}
-	//*/
-
-	void reset_outputs()
-	{
-		dac.write_trx(trx_out[0], (MCP4922::max + 1) / 2);
-		dac.write_trx(trx_out[1], (MCP4922::max + 1) / 2);
-		dac.send_trx(trx_out[0]);
-		dac.recv_trx();
-		dac.send_trx(trx_out[1]);
-		dac.recv_trx();
-	}
-
-	void write_digital(uint32_t out)
-	{
-		out &= dg_out_mask;
-		REG_WRITE(GPIO_OUT_W1TS_REG, dg_out_lut_s[out]);
-		REG_WRITE(GPIO_OUT_W1TC_REG, dg_out_lut_r[out]);
-	}
-
-#pragma GCC push_options
-#pragma GCC optimize("unroll-loops")
-	uint32_t read_digital()
-	{
-		uint32_t in = REG_READ(GPIO_IN1_REG);
-		uint32_t ret = 0;
-
-		for (size_t b = 0; b < dg_in_num; ++b)
-			ret |= !!(in & BIT(dig_in[b] - 32)) << b;
-
-		return ret;
-	}
-#pragma GCC pop_options
-
-	void test()
-	{
-		uint16_t relays = 1;
-		do
-		{
-			uint8_t lower = relays;
-			uint8_t upper = relays >> 8;
-
-			expander_a.set_pins(0x00);
-			expander_b.set_pins(0x00);
-
-			vTaskDelay(pdMS_TO_TICKS(5));
-
-			expander_a.set_pins(lower);
-			expander_b.set_pins(upper);
-
-			vTaskDelay(pdMS_TO_TICKS(1000));
-
-			relays <<= 1;
-		} //
-		while (relays);
-
-		expander_a.set_pins(0x00);
-		expander_b.set_pins(0x00);
-	}
-
-	//
-
-	inline uint8_t range_to_expander_steering(AnIn_Range r)
-	{
-		static constexpr uint8_t steering[] = {0b0000, 0b0001, 0b0010, 0b0100};
-		return steering[static_cast<uint8_t>(r)];
-	}
-
-	/*/
-	// you are basically a bug
-	float input_multiplier(Input in)
-	{
-		constexpr float volt_mul[4] = {0, 1, 10, 100};	  // min range => min attn
-		constexpr float curr_mul[4] = {5, 1000, 100, 10}; // min range => max gain
-
-		constexpr float volt_ratio = 1.0f / (std::numeric_limits<int16_t>::max() >> 4 << 4) * v_ref;
-		constexpr float curr_ratio = 1.0f / (std::numeric_limits<int16_t>::max() >> 4 << 4) * v_ref * 1000;
-
-		switch (in)
-		{
-		case Input::In1:
-			return volt_ratio * volt_mul[static_cast<uint8_t>(range_in[0])];
-		case Input::In2:
-			return volt_ratio * volt_mul[static_cast<uint8_t>(range_in[1])];
-		case Input::In3:
-			return volt_ratio * volt_mul[static_cast<uint8_t>(range_in[2])];
-		case Input::In4:
-			return curr_ratio / curr_mul[static_cast<uint8_t>(range_in[3])];
-		default:
-			return 0;
-		}
-	}
-	//*/
-
-	inline int16_t conv_meas(MCP3204::out_t in)
-	{
-		int16_t out = in;
-		out <<= 16 - MCP3204::bits;
-		out -= std::numeric_limits<int16_t>::min();
-		return out;
-	}
-	inline MCP4922::in_t conv_gen(int16_t in)
-	{
-		uint16_t out = in;
-		out += (uint16_t)std::numeric_limits<int16_t>::min();
-		out >>= 16 - MCP4922::bits;
-		return out;
-	}
-
-	//
-
-	inline float measured_to_volt(int16_t val)
-	{
-		constexpr float ratio = 1.0f / std::numeric_limits<int16_t>::max() * v_ref;
-		return val * ratio; // * attn
-	}
-	inline int16_t volt_to_generated(float val)
-	{
-		if (val >= 10.24f) [[unlikely]]
-			return std::numeric_limits<int16_t>::max();
-		if (val <= -10.24f) [[unlikely]]
-			return std::numeric_limits<int16_t>::min();
-
-		constexpr float ratio = std::numeric_limits<int16_t>::max() / v_ref * 4.0f / 10.0f; // / 10.24f === / v_ref * 4 / 10
-		return std::round(val * ratio);
-	}
-
-	//
 }
