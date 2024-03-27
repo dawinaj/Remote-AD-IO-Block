@@ -48,7 +48,7 @@ public:
 	static constexpr mcp_adc_bits_t bits = B;
 	static constexpr mcp_adc_channels_t channels = C;
 
-	static constexpr out_t ref = 1u << (B - S);
+	static constexpr out_t ref = 1u << (size_t(B) - size_t(S));
 	static constexpr out_t max = ref - 1;
 	static constexpr out_t min = ref - (1u << B);
 

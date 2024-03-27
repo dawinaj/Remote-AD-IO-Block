@@ -21,7 +21,7 @@ using namespace std::literals;
 using namespace rigtorp;
 
 #include "Interpreter.h"
-using namespace Executing;
+using namespace Interpreter;
 
 #include "json_helper.h"
 
@@ -236,7 +236,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 
 	// ESP_LOGV(TAG, "%s", post.c_str());
 
-	Executing::Program program;
+	Interpreter::Program program;
 	std::vector<Generator> generators;
 	std::vector<std::string> errors;
 
@@ -315,11 +315,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	httpd_resp_set_type(req, "application/json");
 
 	ordered_json res = create_ok_response();
-	res["message"] = "Settings have been validated. No errors found. Units: ${data.unit}";
-	res["data"]["unit"]["in1"] = "V";
-	res["data"]["unit"]["in2"] = "V";
-	res["data"]["unit"]["in3"] = "V";
-	res["data"]["unit"]["in4"] = "mA";
+	res["message"] = "Settings have been validated. No errors found.";
 
 	std::string out = res.dump();
 	res.clear();
@@ -331,17 +327,9 @@ static esp_err_t settings_handler(httpd_req_t *req)
 
 void board_io_task(void *arg)
 {
-	{
-		auto *queue = static_cast<SPSCQueue<int16_t> *>(arg);
+	Communi
+	Board::execute();
 
-		auto writefcn = [queue](int16_t in) -> bool
-		{
-			return queue->try_push(in);
-		};
-
-		std::atomic_bool sth;
-		Board::execute(std::move(writefcn), sth);
-	}
 	vTaskSuspend(NULL);
 	// wait for external wakeup
 	vTaskDelete(NULL);
@@ -354,19 +342,17 @@ static esp_err_t io_handler(httpd_req_t *req)
 
 	auto qr = parse_query(req);
 
-	size_t BUF_LEN = 0;
-	if (auto it = qr.find("bl"); it != qr.end())
-		try_parse_integer(it->second, BUF_LEN);
+	size_t time_bytes = 0;
+	if (auto it = qr.find("tb"); it != qr.end())
+		try_parse_integer(it->second, time_bytes);
 
-	if (BUF_LEN == 0)
-		BUF_LEN = 1024;
+	if (time_bytes > 8)
+		time_bytes = 8;
 
-	if (BUF_LEN > 8 * 1024)
-		BUF_LEN = 8 * 1024;
+	ESP_LOGI(TAG, "Preparing Communicator...");
 
-	ESP_LOGI(TAG, "Preparing queue...");
-
-	SPSCQueue<int16_t> queue(BUF_LEN * 32 - 1);
+	Communicator::time_settings(time_bytes);
+	Communicator::cleanup();
 
 	auto send_measurements = [req, &queue](size_t len) -> esp_err_t
 	{

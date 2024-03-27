@@ -21,4 +21,4 @@ idf_component_register(
 	i2c_manager # mcp23008
 )
 
-component_compile_options("-std=gnu++2a" "-ffast-math" "-Wno-maybe-uninitialized")
+component_compile_options("-std=gnu++2a" "-ffast-math" "-fipa-sra" "-Wno-maybe-uninitialized")

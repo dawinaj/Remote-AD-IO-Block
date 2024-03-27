@@ -13,7 +13,7 @@
 	Class(Class &&rhs) = default; \
 	Class &operator=(Class &&rhs) = default;
 
-namespace Executing
+namespace Interpreter
 {
 
 	enum class Command : int8_t
@@ -46,8 +46,6 @@ namespace Executing
 
 	class CmdStatement
 	{
-		friend class Interpreter;
-
 	public:
 		Command cmd = Command::NOP;
 		uint8_t port = 0;

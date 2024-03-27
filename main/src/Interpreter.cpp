@@ -50,7 +50,7 @@ std::vector<std::string> str_split_on_whitespace(const std::string &str)
 	return ret;
 }
 
-namespace Executing
+namespace Interpreter
 {
 	// Scope
 
@@ -248,7 +248,7 @@ namespace Executing
 
 				scopes.pop();
 			}
-
+			/*/
 			else // regular command
 			{
 				CmdStatement cs;
@@ -353,6 +353,7 @@ namespace Executing
 				// no error, command finished, append to highest scope
 				scopes.top()->appendCmd(cs);
 			}
+			//*/
 		}
 		//*/
 

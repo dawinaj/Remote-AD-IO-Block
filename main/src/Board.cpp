@@ -10,9 +10,11 @@
 
 #include <soc/gpio_reg.h>
 
+#include "Communicator.h"
+
 #define NOOP __asm__ __volatile__("nop")
 
-using Executing::Command;
+using Interpreter::Command;
 
 namespace Board
 {
@@ -37,7 +39,7 @@ namespace Board
 	uint32_t dg_out_state = 0;
 	std::array<AnIn_Range, an_in_num> an_in_range;
 	std::vector<Generator> generators;
-	Executing::Program program;
+	Interpreter::Program program;
 
 	//================================//
 	//            HELPERS             //
@@ -349,7 +351,7 @@ AnIn_Range range_decode(std::string s)
 
 	// INTERFACE
 
-	void move_config(Executing::Program &p, std::vector<Generator> &g)
+	void move_config(Interpreter::Program &p, std::vector<Generator> &g)
 	{
 		program = std::move(p);
 		generators = std::move(g);
@@ -368,9 +370,9 @@ AnIn_Range range_decode(std::string s)
 
 		while (true)
 		{
-			Executing::CmdPtr cmd = program.getCmd();
+			Interpreter::CmdPtr cmd = program.getCmd();
 
-			if (cmd == Executing::nullcmd)
+			if (cmd == Interpreter::nullcmd)
 				break;
 
 			Input in = static_cast<Input>(cmd->port);
@@ -407,9 +409,11 @@ AnIn_Range range_decode(std::string s)
 				break;
 
 			case Command::DIRD:
-				// uint32_t res = digital_inputs_read();
-				// write to buffer
+			{
+				uint32_t val = digital_inputs_read();
+				Communicator::write_data(now, val);
 				break;
+			}
 
 			case Command::DOWR:
 				digital_outputs_wr(cmd->arg.u);
@@ -431,21 +435,21 @@ AnIn_Range range_decode(std::string s)
 			{
 				MCP3204::out_t rd = analog_input_read(in);
 				float val = adc_to_value<float>(in, rd);
-				// write to buf
+				Communicator::write_data(now, val);
 				break;
 			}
 			case Command::AIRDM:
 			{
 				MCP3204::out_t rd = analog_input_read(in);
 				int32_t val = adc_to_value<int32_t, 1'000>(in, rd);
-				// write to buf
+				Communicator::write_data(now, val);
 				break;
 			}
 			case Command::AIRDU:
 			{
 				MCP3204::out_t rd = analog_input_read(in);
 				int32_t val = adc_to_value<int32_t, 1'000'000>(in, rd);
-				// write to buf
+				Communicator::write_data(now, val);
 				break;
 			}
 
@@ -468,95 +472,6 @@ AnIn_Range range_decode(std::string s)
 				break;
 			}
 		}
-		//
-		/*/
-			while (iter < general.sample_count)
-			{
-				// setup
-
-				int16_t meas = 0;
-
-				if (exec.do_anlg_inp)
-					in = input.port_order[in_idx];
-
-				if (exec.do_dgtl_out)
-					for (size_t i = 0; i < 4; ++i)
-						if (!output.dig_delays[i].empty())
-						{
-							while (now >= dig_next[i])
-							{
-								dig_out[i] = !dig_out[i];
-								dig_next[i] += output.dig_delays[i][dig_idx[i]];
-								if (++dig_idx[i] == output.dig_delays[i].size())
-									dig_idx[i] = 0;
-							}
-						}
-
-				// wait for synchronisation
-
-				while ((now = esp_timer_get_time()) < next)
-					NOOP;
-				next = now + general.period_us;
-
-				// lessago
-
-
-
-				if (exec.do_dgtl_inp)
-					meas = read_digital();
-
-				if (exec.do_dgtl_out)
-					write_digital(dig_out[0], dig_out[1], dig_out[2], dig_out[3]);
-
-				if (exec.do_anlg_out)
-				{
-					if (!gen1->empty())
-					{
-						dac.write_trx(*trx1, conv_gen(volt_to_generated(gen1_val)));
-						dac.send_trx(*trx1);
-						gen1_val = gen1->get(next - start);
-						dac.recv_trx();
-					}
-					if (!gen2->empty())
-					{
-						dac.write_trx(*trx2, conv_gen(volt_to_generated(gen2_val)));
-						dac.send_trx(*trx2);
-						gen2_val = gen2->get(next - start);
-						dac.recv_trx();
-					}
-				}
-
-				if (in != Input::None)
-				{
-					adc.recv_trx();
-					meas |= conv_meas(adc.parse_trx(*trxin));
-				}
-
-				if (exec.do_dgtl_inp || exec.do_anlg_inp)
-				{
-					bool ok = callback(meas);
-
-					if (!ok)
-						goto exit;
-				}
-
-				if (exec.do_anlg_inp)
-					if (++rpt == input.repeats)
-					{
-						rpt = 0;
-						if (++in_idx == input.port_order.size())
-							in_idx = 0;
-					}
-
-				++iter;
-			}
-
-		//*/
-
-		// if (buf_pos)
-		// 	input.callback(buffers[buf_idx].data(), buf_pos, ctx);
-
-	exit:
 
 		while (esp_timer_get_time() < waitfor)
 			NOOP;
