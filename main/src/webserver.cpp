@@ -22,6 +22,7 @@ using namespace rigtorp;
 
 #include "Interpreter.h"
 using namespace Interpreter;
+#include "Communicator.h"
 
 #include "json_helper.h"
 
@@ -327,7 +328,6 @@ static esp_err_t settings_handler(httpd_req_t *req)
 
 void board_io_task(void *arg)
 {
-	Communi
 	Board::execute();
 
 	vTaskSuspend(NULL);
@@ -354,7 +354,7 @@ static esp_err_t io_handler(httpd_req_t *req)
 	Communicator::time_settings(time_bytes);
 	Communicator::cleanup();
 
-	auto send_measurements = [req, &queue](size_t len) -> esp_err_t
+	auto send_measurements = [req](size_t len) -> esp_err_t
 	{
 		ESP_LOGI(TAG, "Sending %zu measurements... Approx size %zu", len, queue.size());
 		const char *str = reinterpret_cast<const char *>(queue.front());
