@@ -3,11 +3,12 @@
 #include <limits>
 #include <cmath>
 
+#include <atomic>
+#include <mutex>
+
 #include <esp_log.h>
 #include <esp_check.h>
-
 #include <esp_timer.h>
-
 #include <soc/gpio_reg.h>
 
 #include "Communicator.h"
@@ -34,6 +35,10 @@ namespace Board
 
 	MCP3204 adc(SPI3_HOST, GPIO_NUM_5, 2'000'000);
 	MCP4922 dac(SPI2_HOST, GPIO_NUM_15, 20'000'000);
+
+	// SOFTWARE SETUP
+	TaskHandle_t execute_task = nullptr;
+	std::mutex data_mutex;
 
 	// STATE MACHINE
 	uint32_t dg_out_state = 0;
@@ -122,21 +127,6 @@ namespace Board
 		}
 	}
 
-	/*/
-AnIn_Range range_decode(std::string s)
-{
-	std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
-				   { return std::toupper(c); });
-	if (s == "MIN")
-		return AnIn_Range::Min;
-	if (s == "MID")
-		return AnIn_Range::Med;
-	if (s == "MAX")
-		return AnIn_Range::Max;
-	return AnIn_Range::OFF;
-}
-//*/
-
 	MCP4922::in_t value_to_dac(Output out, float val)
 	{
 		constexpr float maxabs = u_ref / 2 / 2 * 10; // bipolar and halved, out= -1V -- 1V, *10
@@ -157,13 +147,11 @@ AnIn_Range range_decode(std::string s)
 		return static_cast<int32_t>(std::round(val * ratio)) + offset;
 	}
 
-	//
-
 	//----------------//
 	//    BACKEND     //
 	//----------------//
 
-	// ANALOG
+	// ANALOG INUPT
 
 	esp_err_t analog_input_range(Input in, AnIn_Range r)
 	{
@@ -224,6 +212,8 @@ AnIn_Range range_decode(std::string s)
 		adc.recv_trx();
 		return adc.parse_trx(trx);
 	}
+
+	// ANALOG OUTPUT
 
 	void analog_output_write(Output out, MCP4922::in_t val)
 	{
@@ -293,11 +283,7 @@ AnIn_Range range_decode(std::string s)
 	}
 #pragma GCC pop_options
 
-	//----------------//
-	//    FRONTEND    //
-	//----------------//
-
-	// INIT
+	// HELPERS
 
 	esp_err_t cleanup()
 	{
@@ -312,6 +298,152 @@ AnIn_Range range_decode(std::string s)
 
 		return ESP_OK;
 	}
+
+	// EXECUTABLE
+
+	void execute(void *arg)
+	{
+		while (1)
+		{
+			Communicator::producer_running.wait(false, std::memory_order::relaxed);
+
+			std::lock_guard<std::mutex> lock(data_mutex);
+
+			cleanup();
+			program.reset();
+
+			MCP4922::in_t outval = 0;
+
+			int64_t now = esp_timer_get_time();
+			int64_t start = now + 1;
+			int64_t waitfor = start;
+
+			while (true)
+			{
+				bool ok = true;
+
+				Interpreter::CmdPtr cmd = program.getCmd();
+
+				if (cmd == Interpreter::nullcmd)
+					break;
+
+				Input in = static_cast<Input>(cmd->port);
+				Output out = static_cast<Output>(cmd->port);
+
+				// prepare value for output
+				switch (cmd->cmd)
+				{
+				case Command::AOVAL:
+					outval = value_to_dac(out, cmd->arg.f);
+					break;
+				case Command::AOGEN:
+				{
+					float val = (cmd->arg.u < generators.size()) ? generators[cmd->arg.u].get(waitfor - start) : 0;
+					outval = value_to_dac(out, val);
+					break;
+				}
+				default:
+					break;
+				}
+
+				// wait for precise synchronization
+				while ((now = esp_timer_get_time()) < waitfor)
+					NOOP;
+
+				// actual execution
+				switch (cmd->cmd)
+				{
+				case Command::DELAY:
+					waitfor += cmd->arg.u;
+					break;
+				case Command::GETTM:
+					waitfor = now + 1;
+					break;
+
+				case Command::DIRD:
+				{
+					uint32_t val = digital_inputs_read();
+					ok = Communicator::write_data(now, val);
+					break;
+				}
+
+				case Command::DOWR:
+					digital_outputs_wr(cmd->arg.u);
+					break;
+				case Command::DOSET:
+					digital_outputs_set(cmd->arg.u);
+					break;
+				case Command::DORST:
+					digital_outputs_rst(cmd->arg.u);
+					break;
+				case Command::DOAND:
+					digital_outputs_and(cmd->arg.u);
+					break;
+				case Command::DOXOR:
+					digital_outputs_xor(cmd->arg.u);
+					break;
+
+				case Command::AIRDF:
+				{
+					MCP3204::out_t rd = analog_input_read(in);
+					float val = adc_to_value<float>(in, rd);
+					ok = Communicator::write_data(now, val);
+					break;
+				}
+				case Command::AIRDM:
+				{
+					MCP3204::out_t rd = analog_input_read(in);
+					int32_t val = adc_to_value<int32_t, 1'000>(in, rd);
+					ok = Communicator::write_data(now, val);
+					break;
+				}
+				case Command::AIRDU:
+				{
+					MCP3204::out_t rd = analog_input_read(in);
+					int32_t val = adc_to_value<int32_t, 1'000'000>(in, rd);
+					ok = Communicator::write_data(now, val);
+					break;
+				}
+
+				case Command::AOVAL:
+				case Command::AOGEN:
+					analog_output_write(out, outval);
+					break;
+
+				case Command::AIEN:
+					analog_inputs_enable();
+					break;
+				case Command::AIDIS:
+					analog_inputs_disable();
+					break;
+				case Command::AIRNG:
+					analog_input_range(in, static_cast<AnIn_Range>(cmd->arg.u));
+					break;
+
+				default:
+					break;
+				}
+
+				if (!ok || Communicator::please_exit.load(std::memory_order::relaxed))
+					break;
+			}
+
+			while (esp_timer_get_time() < waitfor)
+				NOOP;
+
+			cleanup();
+
+			Communicator::producer_running.store(false, std::memory_order_relaxed);
+			Communicator::producer_running.notify_one();
+		}
+		// never ends
+	}
+
+	//----------------//
+	//    FRONTEND    //
+	//----------------//
+
+	// INIT
 
 	esp_err_t init()
 	{
@@ -331,6 +463,8 @@ AnIn_Range range_decode(std::string s)
 		dac.acquire_spi();
 
 		cleanup();
+
+		xTaskCreatePinnedToCore(execute, "BoardTask", BOARD_MEM, nullptr, BOARD_PRT, &execute_task, CPU1);
 
 		ESP_LOGI(TAG, "Constructed!");
 
@@ -353,134 +487,10 @@ AnIn_Range range_decode(std::string s)
 
 	void move_config(Interpreter::Program &p, std::vector<Generator> &g)
 	{
+		std::lock_guard<std::mutex> lock(data_mutex);
+
 		program = std::move(p);
 		generators = std::move(g);
-	}
-
-	esp_err_t execute(WriteCb &&callback, std::atomic_bool &exit)
-	{
-		cleanup();
-		program.reset();
-
-		MCP4922::in_t outval = 0;
-
-		int64_t now = esp_timer_get_time();
-		int64_t start = now + 1;
-		int64_t waitfor = start;
-
-		while (true)
-		{
-			Interpreter::CmdPtr cmd = program.getCmd();
-
-			if (cmd == Interpreter::nullcmd)
-				break;
-
-			Input in = static_cast<Input>(cmd->port);
-			Output out = static_cast<Output>(cmd->port);
-
-			// prepare value for output
-			switch (cmd->cmd)
-			{
-			case Command::AOVAL:
-				outval = value_to_dac(out, cmd->arg.f);
-				break;
-			case Command::AOGEN:
-			{
-				float val = (cmd->arg.u < generators.size()) ? generators[cmd->arg.u].get(waitfor - start) : 0;
-				outval = value_to_dac(out, val);
-				break;
-			}
-			default:
-				break;
-			}
-
-			// wait for precise synchronization
-			while ((now = esp_timer_get_time()) < waitfor)
-				NOOP;
-
-			// actual execution
-			switch (cmd->cmd)
-			{
-			case Command::DELAY:
-				waitfor += cmd->arg.u;
-				break;
-			case Command::GETTM:
-				waitfor = now + 1;
-				break;
-
-			case Command::DIRD:
-			{
-				uint32_t val = digital_inputs_read();
-				Communicator::write_data(now, val);
-				break;
-			}
-
-			case Command::DOWR:
-				digital_outputs_wr(cmd->arg.u);
-				break;
-			case Command::DOSET:
-				digital_outputs_set(cmd->arg.u);
-				break;
-			case Command::DORST:
-				digital_outputs_rst(cmd->arg.u);
-				break;
-			case Command::DOAND:
-				digital_outputs_and(cmd->arg.u);
-				break;
-			case Command::DOXOR:
-				digital_outputs_xor(cmd->arg.u);
-				break;
-
-			case Command::AIRDF:
-			{
-				MCP3204::out_t rd = analog_input_read(in);
-				float val = adc_to_value<float>(in, rd);
-				Communicator::write_data(now, val);
-				break;
-			}
-			case Command::AIRDM:
-			{
-				MCP3204::out_t rd = analog_input_read(in);
-				int32_t val = adc_to_value<int32_t, 1'000>(in, rd);
-				Communicator::write_data(now, val);
-				break;
-			}
-			case Command::AIRDU:
-			{
-				MCP3204::out_t rd = analog_input_read(in);
-				int32_t val = adc_to_value<int32_t, 1'000'000>(in, rd);
-				Communicator::write_data(now, val);
-				break;
-			}
-
-			case Command::AOVAL:
-			case Command::AOGEN:
-				analog_output_write(out, outval);
-				break;
-
-			case Command::AIEN:
-				analog_inputs_enable();
-				break;
-			case Command::AIDIS:
-				analog_inputs_disable();
-				break;
-			case Command::AIRNG:
-				analog_input_range(in, static_cast<AnIn_Range>(cmd->arg.u));
-				break;
-
-			default:
-				break;
-			}
-		}
-
-		while (esp_timer_get_time() < waitfor)
-			NOOP;
-
-		cleanup();
-
-		// ESP_LOGI(TAG, "Operation: %d cycles, took %d us, equals %f us/c", int(iter), int(next - start), float(next - start) / iter);
-
-		return ESP_OK;
 	}
 
 }

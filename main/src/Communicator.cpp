@@ -23,6 +23,8 @@ namespace Communicator
 	esp_err_t cleanup()
 	{
 		bipbuf.clear();
+		please_exit.store(false, std::memory_order::relaxed);
+		producer_running.store(false, std::memory_order::relaxed);
 		return ESP_OK;
 	}
 
@@ -49,7 +51,7 @@ namespace Communicator
 	{
 		etl::span<char> rsvd = bipbuf.write_reserve_optimal(res_wrt_4b);
 
-		if (rsvd.data() == nullptr || rsvd.size() != res_wrt_4b) [[unlikely]]
+		if (/*rsvd.data() == nullptr ||*/ rsvd.size() != res_wrt_4b) [[unlikely]]
 		{
 			ESP_LOGE(TAG, "Failed to reserve space for buffer writing!");
 			return false;

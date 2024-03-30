@@ -62,19 +62,17 @@ namespace Board
 	// esp_err_t disable_inputs();
 	// esp_err_t enable_inputs();
 
-	esp_err_t execute();
-
 	void move_config(Interpreter::Program &, std::vector<Generator> &);
 
-	//uint32_t read_digital();
-	//void write_digital(uint32_t);
+	// uint32_t read_digital();
+	// void write_digital(uint32_t);
 
-	//float input_multiplier(Input);
+	// float input_multiplier(Input);
 
 	// public?
-	//int16_t conv_meas(MCP3204::out_t);
-	//MCP4922::in_t conv_gen(int16_t);
+	// int16_t conv_meas(MCP3204::out_t);
+	// MCP4922::in_t conv_gen(int16_t);
 
-	//float measured_to_volt(int16_t);
-	//int16_t volt_to_generated(float);
+	// float measured_to_volt(int16_t);
+	// int16_t volt_to_generated(float);
 };

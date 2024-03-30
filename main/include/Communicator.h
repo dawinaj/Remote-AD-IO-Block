@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <utility>
 
 #include <esp_log.h>
@@ -13,11 +14,8 @@ namespace Communicator
 
 	constexpr size_t buf_len = 8 * 1024;
 
-	// union data_t
-	// {
-	// 	float f;
-	// 	uint32_t u;
-	// };
+	std::atomic_bool please_exit;
+	std::atomic_bool producer_running;
 
 	//	using WriteCb = std::function<bool(int16_t)>;
 

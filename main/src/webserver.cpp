@@ -252,20 +252,11 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	{
 		if (reader.err == HTTPD_SOCK_ERR_TIMEOUT)
 			httpd_resp_send_408(req);
-		return ESP_FAIL;
+		return reader.err;
 	}
 
 	if (!q.is_discarded())
 	{
-		//*/
-		if (q.contains("program") && q.at("program").is_string())
-		{
-			// parse program
-			const std::string &prg = q.at("program").get_ref<const json::string_t &>();
-			program.parse(prg, errors);
-		}
-		//*/
-
 		//*/
 		if (q.contains("generators") && q.at("generators").is_array())
 		{
@@ -287,59 +278,53 @@ static esp_err_t settings_handler(httpd_req_t *req)
 					errors.push_back("Generator #"s + key + " failed to parse!");
 					ESP_LOGE(TAG, "%s", e.what());
 				}
+				val = nullptr;
 			}
+			q.erase("generators");
+		}
+		//*/
+		//*/
+		if (q.contains("program") && q.at("program").is_string())
+		{
+			// parse program
+			const std::string &prg = q.at("program").get_ref<const json::string_t &>();
+			program.parse(prg, errors);
+			q.erase("program");
 		}
 		//*/
 	}
 	else
 		errors.push_back("JSON is invalid!");
-	//	}
-	//	else
-	//		errors.push_back("JSON must be ASCII!");
 
 	Board::move_config(program, generators);
+
+	//
+
+	httpd_resp_set_type(req, "application/json");
 
 	if (!errors.empty())
 	{
 		httpd_resp_set_status(req, HTTPD_400);
-		httpd_resp_set_type(req, "application/json");
 
 		ordered_json res = create_err_response(errors);
 		errors.clear();
 		std::string out = res.dump();
-		httpd_resp_send(req, out.c_str(), out.length());
 
-		return ESP_OK;
+		return httpd_resp_send(req, out.c_str(), out.length());
 	}
-
-	httpd_resp_set_status(req, HTTPD_200);
-	httpd_resp_set_type(req, "application/json");
 
 	ordered_json res = create_ok_response();
 	res["message"] = "Settings have been validated. No errors found.";
 
 	std::string out = res.dump();
 	res.clear();
-	httpd_resp_send(req, out.c_str(), out.length());
 
-	return ESP_OK;
+	return httpd_resp_send(req, out.c_str(), out.length());
 }
 //
 
-void board_io_task(void *arg)
-{
-	Board::execute();
-
-	vTaskSuspend(NULL);
-	// wait for external wakeup
-	vTaskDelete(NULL);
-}
-
 static esp_err_t io_handler(httpd_req_t *req)
 {
-	httpd_resp_set_status(req, HTTPD_200);
-	httpd_resp_set_type(req, "application/octet-stream");
-
 	auto qr = parse_query(req);
 
 	size_t time_bytes = 0;
@@ -349,94 +334,51 @@ static esp_err_t io_handler(httpd_req_t *req)
 	if (time_bytes > 8)
 		time_bytes = 8;
 
-	ESP_LOGI(TAG, "Preparing Communicator...");
+	// Make sure that the producer is *not* running
+	Communicator::producer_running.wait(true, std::memory_order::relaxed);
 
+	// Apply changes
+	ESP_LOGI(TAG, "Preparing Communicator...");
 	Communicator::time_settings(time_bytes);
 	Communicator::cleanup();
 
-	auto send_measurements = [req](size_t len) -> esp_err_t
-	{
-		ESP_LOGI(TAG, "Sending %zu measurements... Approx size %zu", len, queue.size());
-		const char *str = reinterpret_cast<const char *>(queue.front());
-		esp_err_t ret = httpd_resp_send_chunk(req, str, len * sizeof(int16_t));
-		while (len--)
-			queue.pop();
-		return ret;
-	};
+	// Start producer
+	ESP_LOGI(TAG, "Notifying producer...");
+	Communicator::producer_running.store(true, std::memory_order::relaxed);
+	Communicator::producer_running.notify_one();
 
-	ESP_LOGI(TAG, "Spawning task...");
-
-	TaskHandle_t io_hdl = nullptr;
-	xTaskCreatePinnedToCore(board_io_task, "BoardTask", BOARD_MEM, static_cast<void *>(&queue), BOARD_PRT, &io_hdl, CPU1);
-
+	// Start consumer
 	ESP_LOGI(TAG, "Running consumer...");
-
-	do
+	httpd_resp_set_type(req, "application/octet-stream");
+	while (1)
 	{
-		if (queue.size() >= BUF_LEN)
-			send_measurements(BUF_LEN);
-		else
-			vTaskDelay(1);
-	} //
-	while (eTaskGetState(io_hdl) != eTaskState::eSuspended);
-
-	vTaskResume(io_hdl); // resumes to delete itself
-
-	while (!queue.empty())
-	{
-		send_measurements(std::min(queue.size(), BUF_LEN));
 		vTaskDelay(1);
-	}
+		auto rsvd = Communicator::get_read();
 
-	httpd_resp_send_chunk(req, nullptr, 0);
-
-	return ESP_OK;
-}
-
-/*/
-static esp_err_t put_handler(httpd_req_t *req)
-{
-	char buf;
-	int ret;
-
-	if ((ret = httpd_req_recv(req, &buf, 1)) <= 0)
-	{
-		if (ret == HTTPD_SOCK_ERR_TIMEOUT)
+		if (/*rsvd.data() == nullptr ||*/ rsvd.size() == 0)
 		{
-			httpd_resp_send_408(req);
+			if (Communicator::producer_running.load(std::memory_order::relaxed))
+				continue;
+			else
+				break;
 		}
-		return ESP_FAIL;
+
+		ESP_LOGI(TAG, "Sending %zu bytes...", rsvd.size());
+		esp_err_t ret = httpd_resp_send_chunk(req, rsvd.data(), rsvd.size());
+
+		Communicator::commit_read();
+
+		if (ret != ESP_OK)
+		{
+			Communicator::please_exit.store(true, std::memory_order::relaxed);
+			return ret;
+		}
 	}
 
-	httpd_resp_send(req, NULL, 0);
-	return ESP_OK;
+	return httpd_resp_send_chunk(req, nullptr, 0);
 }
-//*/
 
-/*/
-static esp_err_t gpio_handler(httpd_req_t *req)
-{
-	static int lvl = 0;
-	if (lvl == 0)
-		gpio_set_level(GPIO_NUM_18, lvl = 1);
-	else
-		gpio_set_level(GPIO_NUM_18, lvl = 0);
-
-	httpd_resp_set_status(req, HTTPD_200);
-	httpd_resp_set_type(req, "application/json");
-
-	json doc = create_ok_response();
-	doc["data"]["gpio_diode"] = lvl;
-	doc["data"]["gpio_button"] = gpio_get_level(GPIO_NUM_19);
-
-	doc["message"] = "Diode is: ${data.gpio_diode}\nButton is: ${data.gpio_button}";
-
-	std::string out = doc.dump();
-	httpd_resp_send(req, out.c_str(), out.length());
-
-	return ESP_OK;
-}
-//*/
+//
 
 static const httpd_uri_t welcome_uri = {
 	.uri = "/",
@@ -459,81 +401,45 @@ static const httpd_uri_t settings_uri = {
 	.user_ctx = nullptr,
 };
 
-// static const httpd_uri_t put_uri = {
-// 	.uri = "/put",
-// 	.method = HTTP_PUT,
-// 	.handler = put_handler,
-// 	.user_ctx = nullptr,
-// };
-
-// static const httpd_uri_t gpio_uri = {
-// 	.uri = "/gpio",
-// 	.method = HTTP_GET,
-// 	.handler = gpio_handler,
-// 	.user_ctx = nullptr,
-// };
-
 //
 
-httpd_handle_t start_webserver()
-{
+static httpd_handle_t server = nullptr;
 
+esp_err_t start_webserver()
+{
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 
 	config.task_priority = HTTP_PRT;
 	config.stack_size = HTTP_MEM;
 	config.core_id = CPU0;
-	// config.max_open_sockets = 1;
+	config.max_open_sockets = 1; // 3 for internal, 1 for external
+	config.max_uri_handlers = 3;
+
+	config.keep_alive_enable = true;
+	config.keep_alive_idle = 5;
+	config.keep_alive_interval = 5;
+	config.keep_alive_count = 3;
 
 	// Start the httpd server
 	ESP_LOGI(TAG, "Starting server on port: %d", config.server_port);
 
-	httpd_handle_t server = nullptr;
-	if (httpd_start(&server, &config) == ESP_OK)
+	esp_err_t ret = httpd_start(&server, &config);
+
+	if (ret != ESP_OK)
 	{
-		// Set URI handlers
-		ESP_LOGI(TAG, "Registering URI handlers");
-		httpd_register_uri_handler(server, &welcome_uri);
-		httpd_register_uri_handler(server, &io_uri);
-		httpd_register_uri_handler(server, &settings_uri);
-		return server;
+		ESP_LOGI(TAG, "Error starting server!");
+		return ret;
 	}
 
-	ESP_LOGI(TAG, "Error starting server!");
-	return nullptr;
+	ESP_LOGI(TAG, "Registering URI handlers");
+	httpd_register_uri_handler(server, &welcome_uri);
+	httpd_register_uri_handler(server, &io_uri);
+	httpd_register_uri_handler(server, &settings_uri);
+
+	return ESP_OK;
 }
 
-esp_err_t stop_webserver(httpd_handle_t server)
+esp_err_t stop_webserver()
 {
-	// Stop the httpd server
 	return httpd_stop(server);
 }
-
-/*/
-void disconnect_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
-{
-	httpd_handle_t *server = (httpd_handle_t *)arg;
-	if (*server)
-	{
-		ESP_LOGI(TAG, "Stopping webserver");
-		if (stop_webserver(*server) == ESP_OK)
-		{
-			*server = NULL;
-		}
-		else
-		{
-			ESP_LOGE(TAG, "Failed to stop http server");
-		}
-	}
-}
-
-void connect_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
-{
-	httpd_handle_t *server = (httpd_handle_t *)arg;
-	if (*server == NULL)
-	{
-		ESP_LOGI(TAG, "Starting webserver");
-		*server = start_webserver();
-	}
-}
-//*/
