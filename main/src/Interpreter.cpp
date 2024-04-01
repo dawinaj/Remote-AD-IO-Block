@@ -1,7 +1,11 @@
-#include <stack>
+#include "Interpreter.h"
+
 #include <cmath>
 
-#include "Interpreter.h"
+#include <array>
+#include <stack>
+
+#include <functional>
 
 #include "to_integer.h"
 #include "to_floating_point.h"
@@ -12,7 +16,7 @@ using namespace std::string_literals;
 	{                                                                    \
 		prgValid = false;                                                \
 		err.push_back("Stmt #"s + std::to_string(line) + ": " + reason); \
-		continue;                                                        \
+		goto end_of_stmt;                                                \
 	}
 
 static const char *expstx = "expected syntax: ";
@@ -23,7 +27,7 @@ static const char *expstx = "expected syntax: ";
 	if (args.size() != cnt) \
 	PARSE_ERR_SNTX()
 
-std::vector<std::string> str_split_on_whitespace(const std::string &str)
+static std::vector<std::string> str_split_on_whitespace(const std::string &str)
 {
 	std::vector<std::string> ret;
 
@@ -52,15 +56,17 @@ std::vector<std::string> str_split_on_whitespace(const std::string &str)
 
 namespace Interpreter
 {
+#include "InterpreterLUT.h"
+
 	// Scope
 
 	Scope::Scope() = default;
 	Scope::~Scope() = default;
 
-	CmdPtr Scope::getCmd()
+	StmtPtr Scope::getStmt()
 	{
 		if (finished()) [[unlikely]] // never
-			return nullcmd;
+			return nullstmt;
 
 		AnyStatement &stmt = statements[index];
 
@@ -69,12 +75,12 @@ namespace Interpreter
 		case 1: // cmd
 		{
 			++index;
-			return &std::get<CmdStatement>(stmt);
+			return &std::get<Statement>(stmt);
 		}
 		case 2: // loop
 		{
 			Loop &loop = *std::get<LoopPtr>(stmt);
-			CmdPtr ret = loop.getCmd();
+			StmtPtr ret = loop.getStmt();
 			if (loop.finished())
 			{
 				++index;
@@ -83,7 +89,7 @@ namespace Interpreter
 			return ret;
 		}
 		default:
-			return nullcmd;
+			return nullstmt;
 		}
 	}
 
@@ -102,10 +108,10 @@ namespace Interpreter
 			{
 				Loop &loop = *std::get<LoopPtr>(stmt);
 				loop.reset();
-				continue;
+				break;
 			}
 			default:
-				continue;
+				break;
 			}
 		}
 	}
@@ -114,10 +120,10 @@ namespace Interpreter
 		index = 0;
 	}
 
-	CmdStatement &Scope::appendCmd(const CmdStatement &c)
+	Statement &Scope::appendStmt(const Statement &c)
 	{
-		statements.emplace_back(std::in_place_type<CmdStatement>, c);
-		return std::get<CmdStatement>(statements.back());
+		statements.emplace_back(std::in_place_type<Statement>, c);
+		return std::get<Statement>(statements.back());
 	}
 
 	Loop &Scope::appendLoop(size_t iters)
@@ -131,12 +137,12 @@ namespace Interpreter
 	Loop::Loop(size_t mi) : max_iter(mi) {}
 	Loop::~Loop() = default;
 
-	CmdPtr Loop::getCmd()
+	StmtPtr Loop::getStmt()
 	{
 		if (finished()) [[unlikely]] // never
-			return nullcmd;
+			return nullstmt;
 
-		CmdPtr ret = scope.getCmd();
+		StmtPtr ret = scope.getStmt();
 
 		if (scope.finished())
 		{
@@ -170,11 +176,11 @@ namespace Interpreter
 
 	// Program
 
-	CmdPtr Program::getCmd()
+	StmtPtr Program::getStmt()
 	{
 		if (scope.finished()) [[unlikely]]
-			return nullcmd;
-		return scope.getCmd();
+			return nullstmt;
+		return scope.getStmt();
 	}
 	void Program::reset()
 	{
@@ -182,6 +188,24 @@ namespace Interpreter
 	}
 
 	//
+
+	// helper
+
+	static bool try_parse_range(const std::string &arg, uint32_t &val)
+	{
+		if (arg == "OFF")
+			val = 0;
+		else if (arg == "MIN")
+			val = 1;
+		else if (arg == "MED")
+			val = 2;
+		else if (arg == "MAX")
+			val = 3;
+		else
+			return false;
+
+		return true;
+	}
 
 	bool Program::parse(const std::string &str, std::vector<std::string> &err)
 	{
@@ -248,112 +272,30 @@ namespace Interpreter
 
 				scopes.pop();
 			}
-			/*/
+			//*/
 			else // regular command
 			{
-				CmdStatement cs;
+				Statement cs;
 
-				// analog
-				if (cmd == "ANIN")
+				for (const auto &lut : CS_LUT)
 				{
-					const char *syntax = "ANIN <port (1|2|3|4)>";
-					cs.cmd = Command::ANIN;
+					if (cmd == lut.namestr)
+					{
+						cs.cmd = lut.cmd;
 
-					ARG_CNT_CHK(1)
+						ARG_CNT_CHK(2)
 
-					if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 4))
-						PARSE_ERR_SNTX()
+						if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 2))
+							PARSE_ERR_SNTX()
+
+						if (!try_parse_floating_point(args[1], cs.arg.f) || !std::isfinite(cs.arg.f))
+							PARSE_ERR_SNTX()
+					}
 				}
-
-				else if (cmd == "ANOUT")
-				{
-					const char *syntax = "ANOUT <port (1|2)> <voltage (float)>";
-					cs.cmd = Command::ANOUT;
-
-					ARG_CNT_CHK(2)
-
-					if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 2))
-						PARSE_ERR_SNTX()
-
-					if (!try_parse_floating_point(args[1], cs.arg.f) || !std::isfinite(cs.arg.f))
-						PARSE_ERR_SNTX()
-				}
-
-				else if (cmd == "ANGEN")
-				{
-					const char *syntax = "ANGEN <port (1|2)> <generator idx (uint<16)>";
-					cs.cmd = Command::ANGEN;
-
-					ARG_CNT_CHK(2)
-
-					if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 2))
-						PARSE_ERR_SNTX()
-
-					if (!try_parse_integer(args[1], cs.arg.u) || !(cs.port < 16))
-						PARSE_ERR_SNTX()
-				}
-
-				// digital
-				else if (cmd == "DGIN")
-				{
-					const char *syntax = "DGIN <no args>";
-					cs.cmd = Command::DGIN;
-
-					ARG_CNT_CHK(0)
-				}
-
-				else if (cmd == "DGOUT")
-				{
-					const char *syntax = "DGOUT <state (4 bits hex/oct/dec)>";
-					cs.cmd = Command::DGOUT;
-
-					ARG_CNT_CHK(1)
-
-					if (!try_parse_integer(args[0], cs.arg.u, 0) || !(cs.arg.u <= 0b1111))
-						PARSE_ERR_SNTX()
-				}
-
-				// other
-				else if (cmd == "DELAY")
-				{
-					const char *syntax = "DELAY <microseconds (+uint32)>";
-					cs.cmd = Command::DELAY;
-
-					ARG_CNT_CHK(1)
-
-					if (!try_parse_integer(args[0], cs.arg.u) || !(cs.arg.u > 0))
-						PARSE_ERR_SNTX()
-				}
-
-				else if (cmd == "RANGE")
-				{
-					const char *syntax = "RANGE <port (1|2|3|4)> <range (OFF|MIN|MED|MAX)>";
-					cs.cmd = Command::RANGE;
-
-					ARG_CNT_CHK(2)
-
-					if (!try_parse_integer(args[0], cs.port) || !(cs.port >= 1 && cs.port <= 4))
-						PARSE_ERR_SNTX()
-
-					if (args[1] == "OFF")
-						cs.arg.u = 0;
-					else if (args[1] == "MIN")
-						cs.arg.u = 1;
-					else if (args[1] == "MED")
-						cs.arg.u = 2;
-					else if (args[1] == "MAX")
-						cs.arg.u = 3;
-					else
-						PARSE_ERR_SNTX()
-				}
-
-				else
-					PARSE_ERR("unknown command!")
-
-				// no error, command finished, append to highest scope
-				scopes.top()->appendCmd(cs);
+				PARSE_ERR("unknown command!")
 			}
-			//*/
+		//*/
+		end_of_stmt:
 		}
 		//*/
 
@@ -361,8 +303,6 @@ namespace Interpreter
 
 		for (size_t i = 0; i < scopes.size(); ++i)
 			PARSE_ERR("LOOP missing matching ENDLOOP!");
-
-		// out.appendCmd(cmd);
 
 		return prgValid;
 	}

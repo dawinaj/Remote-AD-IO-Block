@@ -13,8 +13,6 @@
 
 #include "Communicator.h"
 
-#define NOOP __asm__ __volatile__("nop")
-
 using Interpreter::Command;
 
 namespace Board
@@ -303,7 +301,7 @@ namespace Board
 
 	void execute(void *arg)
 	{
-		while (1)
+		while (true)
 		{
 			Communicator::producer_running.wait(false, std::memory_order::relaxed);
 
@@ -313,6 +311,8 @@ namespace Board
 			program.reset();
 
 			MCP4922::in_t outval = 0;
+			Input in;
+			Output out;
 
 			int64_t now = esp_timer_get_time();
 			int64_t start = now + 1;
@@ -322,44 +322,44 @@ namespace Board
 			{
 				bool ok = true;
 
-				Interpreter::CmdPtr cmd = program.getCmd();
+				Interpreter::StmtPtr stmt = program.getStmt();
 
-				if (cmd == Interpreter::nullcmd)
+				if (stmt == Interpreter::nullstmt) [[unlikely]]
 					break;
 
-				Input in = static_cast<Input>(cmd->port);
-				Output out = static_cast<Output>(cmd->port);
+				now = esp_timer_get_time();
 
-				// prepare value for output
-				switch (cmd->cmd)
-				{
-				case Command::AOVAL:
-					outval = value_to_dac(out, cmd->arg.f);
-					break;
-				case Command::AOGEN:
-				{
-					float val = (cmd->arg.u < generators.size()) ? generators[cmd->arg.u].get(waitfor - start) : 0;
-					outval = value_to_dac(out, val);
-					break;
-				}
-				default:
-					break;
-				}
-
-				// wait for precise synchronization
-				while ((now = esp_timer_get_time()) < waitfor)
-					NOOP;
-
-				// actual execution
-				switch (cmd->cmd)
+				switch (stmt->cmd)
 				{
 				case Command::DELAY:
-					waitfor += cmd->arg.u;
-					break;
+					waitfor += stmt->arg.u;
+					goto exit_check_ok;
 				case Command::GETTM:
-					waitfor = now + 1;
-					break;
+					waitfor = std::max(now, waitfor);
+					goto exit_check_ok;
+				}
 
+				in = static_cast<Input>(stmt->port);
+				out = static_cast<Output>(stmt->port);
+
+				// prepare value for output
+				switch (stmt->cmd)
+				{
+				case Command::AOVAL:
+					outval = value_to_dac(out, stmt->arg.f);
+					break;
+				case Command::AOGEN:
+					outval = value_to_dac(out, (stmt->arg.u < generators.size()) ? generators[stmt->arg.u].get(std::max(now, waitfor) - start) : 0);
+					break;
+				}
+
+				// wait for synchronization
+				while ((now = esp_timer_get_time()) < waitfor)
+					__asm__ __volatile__("nop");
+
+				// actual execution
+				switch (stmt->cmd)
+				{
 				case Command::DIRD:
 				{
 					uint32_t val = digital_inputs_read();
@@ -368,19 +368,19 @@ namespace Board
 				}
 
 				case Command::DOWR:
-					digital_outputs_wr(cmd->arg.u);
+					digital_outputs_wr(stmt->arg.u);
 					break;
 				case Command::DOSET:
-					digital_outputs_set(cmd->arg.u);
+					digital_outputs_set(stmt->arg.u);
 					break;
 				case Command::DORST:
-					digital_outputs_rst(cmd->arg.u);
+					digital_outputs_rst(stmt->arg.u);
 					break;
 				case Command::DOAND:
-					digital_outputs_and(cmd->arg.u);
+					digital_outputs_and(stmt->arg.u);
 					break;
 				case Command::DOXOR:
-					digital_outputs_xor(cmd->arg.u);
+					digital_outputs_xor(stmt->arg.u);
 					break;
 
 				case Command::AIRDF:
@@ -417,19 +417,18 @@ namespace Board
 					analog_inputs_disable();
 					break;
 				case Command::AIRNG:
-					analog_input_range(in, static_cast<AnIn_Range>(cmd->arg.u));
-					break;
-
-				default:
+					analog_input_range(in, static_cast<AnIn_Range>(stmt->arg.u));
 					break;
 				}
+
+			exit_check_ok:
 
 				if (!ok || Communicator::please_exit.load(std::memory_order::relaxed))
 					break;
 			}
 
 			while (esp_timer_get_time() < waitfor)
-				NOOP;
+				__asm__ __volatile__("nop");
 
 			cleanup();
 

@@ -15,36 +15,56 @@
 
 namespace Interpreter
 {
+	using CmdUT = uint8_t;
 
-	enum class Command : int8_t
+	// enum CmdDir : CmdUT
+	// {
+	// 	Analog = 0b10000000,
+	// 	Digital = 0b01000000,
+	// 	Misc = 0,
+	// };
+
+	// enum CmdTrait : CmdUT
+	// {
+
+	// 	Analog = 1 << 13,
+	// 	Digital = 1 << 12,
+	// 	Misc = 1 << 11,
+
+	// 	Read = 1 << 10,
+	// 	Write = 1 << 9,
+	// 	Other = 1 << 8,
+	// };
+
+	enum class Command : CmdUT
 	{
 		NOP = 0,
 
-		AIRDF = 11,
-		AIRDM = 12,
-		AIRDU = 13,
+		AIRDF,
+		AIRDM,
+		AIRDU,
 
-		AIEN = 21,
-		AIDIS = 22,
-		AIRNG = 23,
+		AIEN,
+		AIDIS,
+		AIRNG,
 
-		AOVAL = 31,
-		AOGEN = 32,
+		AOVAL,
+		AOGEN,
 
-		DIRD = 51,
+		DIRD,
 
-		DOWR = 71,
-		DOSET = 72,
-		DORST = 73,
-		DOAND = 74,
-		DOXOR = 75,
+		DOWR,
+		DOSET,
+		DORST,
+		DOAND,
+		DOXOR,
 
-		DELAY = 100,
-		GETTM = 101,
+		DELAY,
+		GETTM,
 
 	};
 
-	class CmdStatement
+	class Statement
 	{
 	public:
 		Command cmd = Command::NOP;
@@ -55,22 +75,22 @@ namespace Interpreter
 			float f;
 		} arg;
 
-		CmdStatement() = default;
-		~CmdStatement() = default;
-		// DEFAULT_CP_CTOR(CmdStatement)
-		// DEFAULT_MV_CTOR(CmdStatement)
+		Statement() = default;
+		~Statement() = default;
+		// DEFAULT_CP_CTOR(Statement)
+		// DEFAULT_MV_CTOR(Statement)
 	};
 
 	//
 
-	using CmdPtr = const CmdStatement *;
-	const CmdPtr nullcmd = nullptr;
+	using StmtPtr = const Statement *;
+	const StmtPtr nullstmt = nullptr;
 
 	//
 
 	class Loop;
 	using LoopPtr = std::unique_ptr<Loop>;
-	using AnyStatement = std::variant<std::monostate, CmdStatement, LoopPtr>;
+	using AnyStatement = std::variant<std::monostate, Statement, LoopPtr>;
 
 	//
 
@@ -85,12 +105,12 @@ namespace Interpreter
 		// DEFAULT_CP_CTOR(Scope) // illegal, cant copy vector with uniqueptrs
 		DEFAULT_MV_CTOR(Scope)
 
-		CmdPtr getCmd();
+		StmtPtr getStmt();
 		bool finished();
 		void reset();
 		void restart();
 
-		CmdStatement &appendCmd(const CmdStatement & = CmdStatement());
+		Statement &appendStmt(const Statement & = Statement());
 		Loop &appendLoop(size_t);
 	};
 
@@ -108,7 +128,7 @@ namespace Interpreter
 		// DEFAULT_CP_CTOR(Loop)
 		// DEFAULT_MV_CTOR(Loop)
 
-		CmdPtr getCmd();
+		StmtPtr getStmt();
 		bool finished();
 
 		void reset();
@@ -131,7 +151,7 @@ namespace Interpreter
 
 		bool parse(const std::string &, std::vector<std::string> &);
 
-		CmdPtr getCmd();
+		StmtPtr getStmt();
 		void reset();
 	};
 
