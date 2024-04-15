@@ -4,13 +4,19 @@
 
 namespace Communicator
 {
-	// STATE MACHINE
-	etl::bip_buffer_spsc_atomic<char, buf_len> bipbuf;
+	namespace
+	{
+		// STATE MACHINE
+		etl::bip_buffer_spsc_atomic<char, buf_len> bipbuf;
+		etl::span<char> current_read;
 
-	etl::span<char> current_read;
+		std::atomic_bool please_exit;
+		std::atomic_bool producer_running;
 
-	size_t time_bytes = 0;
-	size_t res_wrt_4b = 0;
+		// SETTINGS
+		size_t time_bytes = 0;
+		size_t res_wrt_4b = 0;
+	}
 
 	//================================//
 	//         IMPLEMENTATION         //
@@ -30,13 +36,19 @@ namespace Communicator
 
 	esp_err_t init()
 	{
-		cleanup();
+		ESP_RETURN_ON_ERROR(
+			cleanup(),
+			TAG, "Failed to cleanup!");
+
 		return ESP_OK;
 	}
 
 	esp_err_t deinit()
 	{
-		cleanup();
+		ESP_RETURN_ON_ERROR(
+			cleanup(),
+			TAG, "Failed to cleanup!");
+
 		return ESP_OK;
 	}
 
@@ -78,4 +90,33 @@ namespace Communicator
 		bipbuf.read_commit(current_read);
 	}
 
+	//
+
+	bool check_if_running()
+	{
+		return producer_running.load(std::memory_order::relaxed);
+	}
+
+	void start_running()
+	{
+		producer_running.store(true, std::memory_order::relaxed);
+		producer_running.notify_one();
+	}
+
+	void ask_for_exit()
+	{
+		please_exit.store(true, std::memory_order::relaxed);
+		//xSemaphoreGive(sync_semaphore);
+	}
+
+	bool check_if_should_exit()
+	{
+		return please_exit.load(std::memory_order::relaxed);
+	}
+
+	void confirm_exit()
+	{
+		producer_running.store(false, std::memory_order_relaxed);
+		producer_running.notify_one();
+	}
 };

@@ -30,25 +30,31 @@ class MCP4xxx
 
 public:
 	using in_t = uint16_t;
-	static constexpr mcp_dac_bits_t bits = B;
-	static constexpr mcp_adc_channels_t channels = C;
+	static constexpr uint8_t bits = B;
+	static constexpr uint8_t channels = C;
 
-	static constexpr in_t ref = (1u << B);
+	static constexpr in_t ref = (1u << bits);
 	static constexpr in_t max = ref - 1;
 	static constexpr in_t min = 0;
 
 private:
-	spi_device_handle_t spi_hdl;
-	float ref_volt;
-	bool gain_bit;
-	bool refbuf_bit;
+	static constexpr in_t inp_mask = (1u << bits) - 1;
 
-	static constexpr in_t inp_mask = (1u << B) - 1;
+	spi_host_device_t spi_host;
+	gpio_num_t cs_gpio;
+	int clk_hz;
+	spi_device_handle_t spi_hdl = nullptr;
 
 public:
-	MCP4xxx(spi_host_device_t spihost, gpio_num_t csgpio, int clkhz = 10'000'000, float rv = 5.0f, bool gx2 = false, bool rfb = false) : ref_volt(rv), gain_bit(!gx2), refbuf_bit(rfb)
+	MCP4xxx(spi_host_device_t sh, gpio_num_t csg, int chz = 10'000'000) : spi_host(sh), cs_gpio(csg), clk_hz(chz)
 	{
-		esp_err_t ret = ESP_OK;
+		ESP_LOGI(TAG, "Constructed with host: %d, pin: %d", spi_host, cs_gpio);
+	}
+	~MCP4xxx() = default;
+
+	esp_err_t init()
+	{
+		assert(!spi_hdl);
 
 		const spi_device_interface_config_t dev_cfg = {
 			.command_bits = 4,
@@ -58,54 +64,56 @@ public:
 			.duty_cycle_pos = 0,
 			.cs_ena_pretrans = 0,
 			.cs_ena_posttrans = 0,
-			.clock_speed_hz = clkhz,
+			.clock_speed_hz = clk_hz,
 			.input_delay_ns = 0,
-			.spics_io_num = csgpio,
+			.spics_io_num = cs_gpio,
 			.flags = SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY,
 			.queue_size = 1,
 			.pre_cb = NULL,
 			.post_cb = NULL,
 		};
 
-		ESP_GOTO_ON_ERROR(
-			spi_bus_add_device(spihost, &dev_cfg, &spi_hdl),
-			err, TAG, "Failed to add device to SPI bus!");
+		ESP_RETURN_ON_ERROR(
+			spi_bus_add_device(spi_host, &dev_cfg, &spi_hdl),
+			TAG, "Error in spi_bus_add_device!");
 
-		ESP_LOGI(TAG, "Constructed with host: %d, pin: %d", spihost, csgpio);
-		return;
-
-	err:
-		ESP_LOGE(TAG, "Failed to construct MCP! Error: %s", esp_err_to_name(ret));
+		return ESP_OK;
 	}
-	~MCP4xxx()
+
+	esp_err_t deinit()
 	{
-		esp_err_t ret = ESP_OK;
+		assert(spi_hdl);
 
-		ESP_GOTO_ON_ERROR(
+		ESP_RETURN_ON_ERROR(
 			spi_bus_remove_device(spi_hdl),
-			err, TAG, "Failed to remove device from SPI bus!");
-		return;
+			TAG, "Error in spi_bus_remove_device!");
+		spi_hdl = nullptr;
 
-	err:
-		ESP_LOGE(TAG, "Failed to destruct MCP! Error: %s", esp_err_to_name(ret));
+		return ESP_OK;
 	}
 
 	//
 
 	esp_err_t acquire_spi(TickType_t timeout = portMAX_DELAY) const
 	{
+		assert(spi_hdl);
+
 		ESP_RETURN_ON_ERROR(
 			spi_device_acquire_bus(spi_hdl, timeout),
-			TAG, "Failed to acquire SPI bus!");
+			TAG, "Error in spi_device_acquire_bus!");
 
 		return ESP_OK;
 	}
 
 	esp_err_t release_spi() const
 	{
+		assert(spi_hdl);
+
 		spi_device_release_bus(spi_hdl); // return void
 		return ESP_OK;
 	}
+
+	//
 
 	void shutdown_channel(bool chnl) const
 	{
@@ -114,29 +122,27 @@ public:
 		recv_trx();
 	}
 
-	// private:
 	inline esp_err_t send_trx(spi_transaction_t &trx) const
 	{
-		esp_err_t ret = ESP_OK;
+		assert(spi_hdl);
 
-		ESP_GOTO_ON_ERROR(
+		ESP_RETURN_ON_ERROR(
 			spi_device_polling_start(spi_hdl, &trx, portMAX_DELAY),
-			err, TAG, "Error in spi_device_polling_start()");
+			TAG, "Error in spi_device_polling_start!");
 
 		return ESP_OK;
-	err:
-		ESP_LOGE(TAG, "Error in send_trx(): %s", esp_err_to_name(ret));
-		return ret;
 	}
 
 	inline esp_err_t recv_trx(TickType_t timeout = portMAX_DELAY) const
 	{
+		assert(spi_hdl);
+
 		esp_err_t ret = spi_device_polling_end(spi_hdl, timeout);
 
 		if (ret == ESP_OK || ret == ESP_ERR_TIMEOUT) [[likely]]
 			return ret;
 
-		ESP_LOGE(TAG, "Error in recv_trx(): %s", esp_err_to_name(ret));
+		ESP_LOGE(TAG, "Error in recv_trx!");
 		return ret;
 	}
 
@@ -145,10 +151,10 @@ public:
 		*reinterpret_cast<uint32_t *>(trx.tx_data) = SPI_SWAP_DATA_TX(in, B);
 	}
 
-	spi_transaction_t make_trx(bool chnl, bool shdn = false) const
+	spi_transaction_t make_trx(bool chnl, bool shdn = false, bool gain_x2 = false, bool ref_buf = false) const
 	{
 		// Request format (tx)
-		//
+		//  _     __ __
 		//  AB BF GA SD
 		// |--|--|--|--|
 		//
@@ -161,11 +167,11 @@ public:
 
 		spi_transaction_t trx;
 
-		trx.cmd = ((C == MCP_DAC_CHANNELS_2) ? chnl << 3 : 0) | refbuf_bit << 2 | gain_bit << 1 | !shdn; // not shutdown
+		trx.cmd = ((C == MCP_DAC_CHANNELS_2) ? chnl << 3 : 0) | ref_buf << 2 | !gain_x2 << 1 | !shdn;
 		trx.flags = SPI_TRANS_USE_TXDATA;
 
 		trx.rx_buffer = nullptr;
-		trx.length = B;
+		trx.length = bits;
 		trx.rxlength = 0;
 
 		return trx;

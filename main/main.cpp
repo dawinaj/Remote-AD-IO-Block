@@ -1,6 +1,6 @@
-#define NDEBUG 1
+// #define NDEBUG 1
 
-#include "settings.h"
+#include "COMMON.h"
 
 #include <string>
 
@@ -13,18 +13,18 @@
 // #include <nvs_flash.h>
 
 #include "i2c_manager.h"
-
 #include "wifi.h"
-#include "webserver.h"
-#include "adc_task.h"
 
+#include "Communicator.h"
+#include "Board.h"
+#include "webserver.h"
 //
 
 static const char *TAG = "🅱 lok A/C";
 
 //
 
-void init_spi()
+void spi_init()
 {
 	spi_bus_config_t bus2_cfg = {
 		.mosi_io_num = GPIO_NUM_13,
@@ -88,12 +88,21 @@ extern "C" void app_main(void)
 	i2c_manager_init(I2C_NUM_0);
 	ESP_LOGI(TAG, "I2C init done");
 
-	init_spi();
+	spi_init();
 	ESP_LOGI(TAG, "SPI init done");
+
+	vTaskDelay(pdMS_TO_TICKS(1000));
+
+	Communicator::init();
+
+	vTaskDelay(pdMS_TO_TICKS(1000));
 
 	Board::init();
 
 	vTaskDelay(pdMS_TO_TICKS(1000));
+
+	start_webserver();
+
 	// ESP_LOGI(TAG, "Starting testing the relays");
 	// board->test_relays();
 
@@ -162,16 +171,11 @@ extern "C" void app_main(void)
 
 	// return;
 
-	httpd_handle_t server = start_webserver();
-
-	(void)server;
-
 	while (true)
 	{
 		ESP_LOGW(TAG, "Available memory: %" PRId32 "\tMax: %" PRId32, esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
 		vTaskDelay(pdMS_TO_TICKS(20000));
 	}
 
-	// vTaskDelete(NULL);
 	return;
 }

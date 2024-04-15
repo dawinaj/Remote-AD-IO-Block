@@ -27,27 +27,3 @@ ordered_json create_err_response(const std::vector<std::string> &errs)
 	doc["data"]["errors"] = errs;
 	return doc;
 }
-
-//
-
-// const char CMPLDATE[] = __DATE__;
-// const char CMPLTIME[] = __TIME__;
-// const char CMPLVRSN[] = __VERSION__;
-
-ordered_json create_welcome_response()
-{
-	ordered_json doc = create_ok_response();
-
-	doc["message"] = "Welcome!\n"
-					 "Last compilation time: ${data.cmpl.date} ${data.cmpl.time}.\n"
-					 "Compiler version: ${data.cmpl.ver}.\n"
-					 "Go to ${data.url.settings} with appropriate POST JSON to write settings.\n"
-					 "Go to ${data.url.io} to measure stuff.";
-
-	doc["data"]["cmpl"]["date"] = __DATE__;
-	doc["data"]["cmpl"]["time"] = __TIME__;
-	doc["data"]["cmpl"]["vrsn"] = __VERSION__;
-	doc["data"]["url"]["settings"] = "/settings";
-	doc["data"]["url"]["io"] = "/io";
-	return doc;
-}

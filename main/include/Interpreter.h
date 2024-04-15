@@ -2,8 +2,13 @@
 
 #include <string>
 #include <vector>
+
 #include <memory>
 #include <variant>
+
+#include <functional>
+
+//
 
 #define DEFAULT_CP_CTOR(Class)   \
 	Class(Class &rhs) = default; \
@@ -155,4 +160,19 @@ namespace Interpreter
 		void reset();
 	};
 
+	//////
+
+	using ParseCb = std::function<bool(const std::vector<std::string> &, Statement &)>; // in args, out stmt
+
+	struct StmtLUTRow
+	{
+		Interpreter::Command cmd;
+		const char *namestr;
+		const char *argstr;
+		const char *descstr;
+		size_t argcnt;
+		ParseCb parser;
+	};
+
+	extern const std::vector<StmtLUTRow> CS_LUT;
 };

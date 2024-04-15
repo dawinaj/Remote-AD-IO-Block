@@ -1,10 +1,8 @@
 #pragma once
+#include "COMMON.h"
 
 #include <atomic>
 #include <utility>
-
-#include <esp_log.h>
-#include <esp_check.h>
 
 #include "etl/span.h"
 
@@ -14,10 +12,7 @@ namespace Communicator
 
 	constexpr size_t buf_len = 8 * 1024;
 
-	std::atomic_bool please_exit;
-	std::atomic_bool producer_running;
-
-	//	using WriteCb = std::function<bool(int16_t)>;
+	//
 
 	esp_err_t cleanup();
 	esp_err_t init();
@@ -37,5 +32,11 @@ namespace Communicator
 
 	etl::span<char> get_read();
 	void commit_read();
+
+	bool check_if_running();
+	void start_running();
+	void ask_for_exit();
+	bool check_if_should_exit();
+	void confirm_exit();
 
 };

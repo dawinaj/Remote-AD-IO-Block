@@ -37,21 +37,28 @@ private:
 public:
 	MCP23008(i2c_port_t p, uint8_t a = 0b000) : port(p), address((a & 0b111) | 0b0100000), gpio(0)
 	{
-		esp_err_t ret = ESP_OK;
-
-		ESP_GOTO_ON_ERROR(
-			write_reg(Register::IODIR, 0x00),
-			err, TAG, "Failed to init!");
-
 		ESP_LOGI(TAG, "Constructed with port: %d, address: %d", port, address);
-		return;
-
-	err:
-		ESP_LOGE(TAG, "Failed to construct! Error: %s", esp_err_to_name(ret));
 	}
 	~MCP23008()
 	{
 		ESP_LOGI(TAG, "Destructed with port: %d, address: %d", port, address);
+	}
+
+	esp_err_t init()
+	{
+		gpio = 0;
+		ESP_RETURN_ON_ERROR(
+			set_pins(),
+			TAG, "Failed to set_pins!");
+		return ESP_OK;
+	}
+	esp_err_t deinit()
+	{
+		gpio = 0;
+		ESP_RETURN_ON_ERROR(
+			set_pins(),
+			TAG, "Failed to set_pins!");
+		return ESP_OK;
 	}
 
 	//

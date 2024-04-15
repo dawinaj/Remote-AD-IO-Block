@@ -1,0 +1,16 @@
+dependencies:
+  i2c_manager:
+    component_hash: 0be618f16b3b41938a94eba7e17dea09cd049e6ea5eb4550a4b10167164b4bab
+    source:
+      git: https://github.com/pavlot/i2c_manager.git
+      path: .
+      type: git
+    version: 9cf283e02bb1737451c493ad5ca6b5ac13fd1180
+  idf:
+    component_hash: null
+    source:
+      type: idf
+    version: 5.0.1
+manifest_hash: 37b7e6369857698d0a1b7b9d78017af203138443fece8dc89c67c4f47b152066
+target: esp32
+version: 1.0.0

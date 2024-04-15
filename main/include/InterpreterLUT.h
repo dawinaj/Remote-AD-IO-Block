@@ -1,15 +1,6 @@
-using ParseCb = std::function<bool(std::vector<std::string> &, Statement &)>;
+#pragma once
 
-struct StmtLUTRow
-{
-	Interpreter::Command cmd;
-	const char *namestr;
-	const char *argstr;
-	size_t argcnt;
-	ParseCb parser;
-};
-
-#define CB_HELP(COND) [](std::vector<std::string> &args, CmdStatement &cs) { return (COND); }
+#define CB_HELP(COND) [](const std::vector<std::string> &args, Statement &cs) { return (COND); }
 #define READ_IP (try_parse_integer(args[0], cs.port) && (cs.port >= 1 && cs.port <= 4))
 #define READ_OP (try_parse_integer(args[0], cs.port) && (cs.port >= 1 && cs.port <= 2))
 #define READ_DO (try_parse_integer(args[0], cs.arg.u, 0) && (cs.arg.u <= 0b1111))
@@ -17,135 +8,169 @@ struct StmtLUTRow
 #define SNTX_IP "<port (1|2|3|4)>"
 #define SNTX_OP "<port (1|2)>"
 #define SNTX_NO "<no args>"
-#define SNTX_DO "<state (4 bits hex/oct/dec)>"
+#define SNTX_DO "<state (4-bit hex/oct/dec int)>"
 
-static const std::array CS_LUT = std::to_array<StmtLUTRow>({
+const std::vector<StmtLUTRow> CS_LUT = {
 	{
-		Interpreter::Command::NOP,
+		Command::NOP,
 		"NOP",
 		SNTX_NO,
+		"No OPeration - does nothing, does not parse, do not use",
 		0,
 		CB_HELP(false),
 	},
 	//
 	{
-		Interpreter::Command::AIRDF,
+		Command::AIRDF,
 		"AIRDF",
 		SNTX_IP,
+		"Analog Input ReaD Float - returns measurement (V, A) as 32-bit float",
 		1,
 		CB_HELP(READ_IP),
 	},
 	{
-		Interpreter::Command::AIRDM,
+		Command::AIRDM,
 		"AIRDM",
 		SNTX_IP,
+		"Analog Input ReaD Milli - returns measurement (mV, mA) as 32-bit int",
 		1,
 		CB_HELP(READ_IP),
 	},
 	{
-		Interpreter::Command::AIRDU,
+		Command::AIRDU,
 		"AIRDU",
 		SNTX_IP,
+		"Analog Input ReaD Micro - returns measurement (uV, uA) as 32-bit int",
 		1,
 		CB_HELP(READ_IP),
 	},
 	//
 	{
-		Interpreter::Command::AIEN,
+		Command::AIEN,
 		"AIEN",
 		SNTX_NO,
+		"Analog Input ENable - turns on input ports connections",
 		0,
 		CB_HELP(true),
 	},
 	{
-		Interpreter::Command::AIDIS,
+		Command::AIDIS,
 		"AIDIS",
 		SNTX_NO,
+		"Analog Input DISable - turns off input ports connections",
 		0,
 		CB_HELP(true),
 	},
 	{
-		Interpreter::Command::AIRNG,
+		Command::AIRNG,
 		"AIRNG",
 		SNTX_IP " <range (OFF|MIN|MED|MAX)>",
+		"Analog Input RaNGe - sets the range of port (selects divider/multiplier gain)",
 		2,
 		CB_HELP(READ_IP && (try_parse_range(args[1], cs.arg.u))),
 	},
 	//
 	{
-		Interpreter::Command::AOVAL,
+		Command::AOVAL,
 		"AOVAL",
 		SNTX_OP " <voltage (float)>",
+		"Analog Output VALue - outputs value to port",
 		2,
 		CB_HELP(READ_OP && (try_parse_floating_point(args[1], cs.arg.f) && std::isfinite(cs.arg.f))),
 	},
 	{
-		Interpreter::Command::AOGEN,
+		Command::AOGEN,
 		"AOGEN",
 		SNTX_OP " <generator_idx (uint)>",
+		"Analog Output GENerator - outputs value created by the chosen Generator to port",
 		2,
 		CB_HELP(READ_OP && (try_parse_integer(args[1], cs.arg.u))),
 	},
 	//
 	{
-		Interpreter::Command::DIRD,
+		Command::DIRD,
 		"DIRD",
 		SNTX_NO,
+		"Digital Inputs ReaD - returns state of pins as 32-bit uint",
 		0,
 		CB_HELP(true),
 	},
 	//
 	{
-		Interpreter::Command::DOWR,
+		Command::DOWR,
 		"DOWR",
 		SNTX_DO,
+		"Digital Outputs WRite - directly writes the state to the pins",
 		1,
 		CB_HELP(READ_DO),
 	},
 	{
-		Interpreter::Command::DOSET,
+		Command::DOSET,
 		"DOSET",
 		SNTX_DO,
+		"Digital Outputs SET - turns ON pins corresponding to set bits (bitwise OR)",
 		1,
 		CB_HELP(READ_DO),
 	},
 	{
-		Interpreter::Command::DORST,
+		Command::DORST,
 		"DORST",
 		SNTX_DO,
+		"Digital Outputs ReSeT - turns OFF pins corresponding to set bits",
 		1,
 		CB_HELP(READ_DO),
 	},
 	{
-		Interpreter::Command::DOAND,
+		Command::DOAND,
 		"DOAND",
 		SNTX_DO,
+		"Digital Outputs AND - turns OFF pins corresponding to unset bits (bitwise AND)",
 		1,
 		CB_HELP(READ_DO),
 	},
 	{
-		Interpreter::Command::DOXOR,
+		Command::DOXOR,
 		"DOXOR",
 		SNTX_DO,
+		"Digital Outputs XOR - performs a bitwise eXclusive OR operation",
 		1,
 		CB_HELP(READ_DO),
 	},
 	//
 	{
-		Interpreter::Command::DELAY,
+		Command::DELAY,
 		"DELAY",
 		"<microseconds (uint32)>",
+		"DELAY - sets the next synchronization timestamp based on last timestamp",
 		1,
 		CB_HELP(try_parse_integer(args[0], cs.arg.u)),
 	},
 	{
-		Interpreter::Command::GETTM,
+		Command::GETTM,
 		"GETTM",
 		SNTX_NO,
-		1,
+		"GET TiMe - sets the next synchronization timestamp to now",
+		0,
 		CB_HELP(READ_DO),
 	},
-});
+	//
+	{
+		Command::NOP,
+		"LOOP",
+		"<iterations (uint32)>",
+		"LOOP - repeats the code between itself and matching ENDLOOP specified number of times",
+		1,
+		CB_HELP(false),
+	},
+	{
+		Command::NOP,
+		"ENDLOOP",
+		SNTX_NO,
+		"END LOOP - closing of previous LOOP",
+		0,
+		CB_HELP(false),
+	},
+};
 
 #undef CB_HELP
 #undef READ_IP
