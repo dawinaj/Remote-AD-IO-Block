@@ -263,9 +263,10 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 					 "Go to ${data.url.meas} to GET measured stuff.\n"
 					 "Settings JSON is an object with two keys:\n"
 					 "\t- \"program\" is a string, made of semicolon-separated statements (commands with arguments)\n"
-					 "\t- \"generators\" is an array of waveform generator objects\n"
-					 "List of existing commands: ${data.prg.cmds}.\n"
-					 "List of existing generators: ${data.prg.gnrtrs}.\n";
+					 "\t- \"generators\" is an array of amplitudes and waveforms\n"
+					 "List of existing commands with syntax and description: ${data.prg.cmds}.\n"
+					 "Exemplary generator of a sine signal: ${data.prg.gnrtr}.\n"
+					 "List of existing waveforms with syntax: ${data.prg.wvfrms}.\n";
 
 	doc["data"]["cmpl"]["date"] = __DATE__;
 	doc["data"]["cmpl"]["time"] = __TIME__;
@@ -283,6 +284,18 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 		cmd["desc"] = lut.descstr;
 		doc["data"]["prg"]["cmds"].push_back(cmd);
 	}
+
+	Generator gen;
+	gen.add(1.0f, make_signal<SignalSine>(1000));
+	doc["data"]["prg"]["gnrtr"] = static_cast<json>(gen);
+
+	doc["data"]["prg"]["wvfrms"] = ordered_json::array();
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Const);
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Impulse);
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Sine);
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Square);
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Triangle);
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Chirp);
 
 	std::string out = doc.dump();
 
@@ -317,7 +330,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	//	{
 	SocketReader reader(req);
 
-	json q = json::parse(reader.begin(), reader.end(), nullptr, false, true);
+	ordered_json q = ordered_json::parse(reader.begin(), reader.end(), nullptr, false, true);
 	//	post.clear();
 
 	if (reader.err) // failed to read
@@ -343,7 +356,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 					Generator g = val.get<Generator>();
 					generators.push_back(std::move(g));
 				}
-				catch (json::exception &e)
+				catch (ordered_json::exception &e)
 				{
 					generators.emplace_back();
 					errors.push_back("Generator #"s + key + " failed to parse!");
@@ -358,7 +371,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 		if (q.contains("program") && q.at("program").is_string())
 		{
 			// parse program
-			const std::string &prg = q.at("program").get_ref<const json::string_t &>();
+			const std::string &prg = q.at("program").get_ref<const std::string &>();
 			program.parse(prg, errors);
 			q.erase("program");
 		}

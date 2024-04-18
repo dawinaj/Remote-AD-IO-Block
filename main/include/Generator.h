@@ -11,16 +11,16 @@
 
 class Generator
 {
-	public:
+public:
 	using index_t = Signal::index_t;
-	private:
+
+private:
 	using Signals = std::vector<std::pair<float, SignalHdl>>;
 
 	Signals signals;
 	index_t current_step;
 
 public:
-
 	Generator() = default;
 	~Generator() = default;
 

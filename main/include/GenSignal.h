@@ -289,26 +289,26 @@ SignalHdl make_signal(Args &&...args)
 
 inline void from_json(const json &j, SignalHdl &o)
 {
-	SignalType t = j.at("t").get<SignalType>();
+	SignalType t = j.at("WF").get<SignalType>();
 	switch (t)
 	{
 	case SignalType::Const:
-		o = make_signal<SignalConst>(j.at("p"));
+		o = make_signal<SignalConst>(j);
 		break;
 	case SignalType::Impulse:
-		o = make_signal<SignalImpulse>(j.at("p"));
+		o = make_signal<SignalImpulse>(j);
 		break;
 	case SignalType::Sine:
-		o = make_signal<SignalSine>(j.at("p"));
+		o = make_signal<SignalSine>(j);
 		break;
 	case SignalType::Square:
-		o = make_signal<SignalSquare>(j.at("p"));
+		o = make_signal<SignalSquare>(j);
 		break;
 	case SignalType::Triangle:
-		o = make_signal<SignalTriangle>(j.at("p"));
+		o = make_signal<SignalTriangle>(j);
 		break;
 	case SignalType::Delay:
-		o = make_signal<SignalDelay>(j.at("p"));
+		o = make_signal<SignalDelay>(j);
 		break;
 	default:
 		o = make_signal<Signal>();
@@ -318,34 +318,32 @@ inline void from_json(const json &j, SignalHdl &o)
 inline void to_json(json &j, const SignalHdl &o)
 {
 	SignalType t = o.ptr->type();
-	j["t"] = t;
 
-	json obj;
 	switch (t)
 	{
 	case SignalType::Virtual:
 		break;
 	case SignalType::Const:
-		obj = *static_cast<SignalConst *>(o.ptr.get());
+		j = *static_cast<SignalConst *>(o.ptr.get());
 		break;
 	case SignalType::Impulse:
-		obj = *static_cast<SignalImpulse *>(o.ptr.get());
+		j = *static_cast<SignalImpulse *>(o.ptr.get());
 		break;
 	case SignalType::Sine:
-		obj = *static_cast<SignalSine *>(o.ptr.get());
+		j = *static_cast<SignalSine *>(o.ptr.get());
 		break;
 	case SignalType::Square:
-		obj = *static_cast<SignalSquare *>(o.ptr.get());
+		j = *static_cast<SignalSquare *>(o.ptr.get());
 		break;
 	case SignalType::Triangle:
-		obj = *static_cast<SignalTriangle *>(o.ptr.get());
+		j = *static_cast<SignalTriangle *>(o.ptr.get());
 		break;
 	case SignalType::Delay:
-		obj = *static_cast<SignalDelay *>(o.ptr.get());
+		j = *static_cast<SignalDelay *>(o.ptr.get());
 		break;
 	default:
 		break;
 	}
 
-	j["p"] = obj;
+	j["WF"] = t;
 }
