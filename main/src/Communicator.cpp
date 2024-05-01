@@ -2,6 +2,8 @@
 
 #include "etl/bip_buffer_spsc_atomic.h"
 
+#include "Board.h"
+
 namespace Communicator
 {
 	namespace
@@ -63,7 +65,9 @@ namespace Communicator
 	{
 		etl::span<char> rsvd = bipbuf.write_reserve_optimal(res_wrt_4b);
 
-		if (/*rsvd.data() == nullptr ||*/ rsvd.size() != res_wrt_4b) [[unlikely]]
+		// ESP_LOGV(TAG, "Bipbuf wrt A: p=%p, len=%u", (void *)rsvd.data(), rsvd.size());
+
+		if (/*rsvd.data() == nullptr ||*/ rsvd.size() < res_wrt_4b) [[unlikely]]
 		{
 			ESP_LOGE(TAG, "Failed to reserve space for buffer writing!");
 			return false;
@@ -76,7 +80,9 @@ namespace Communicator
 				  reinterpret_cast<const char *>(&time) + time_bytes,
 				  rsvd.data() + 4);
 
-		bipbuf.read_commit(rsvd);
+		bipbuf.write_commit(rsvd.first(res_wrt_4b));
+
+		// ESP_LOGV(TAG, "Bipbuf wrt B: sz=%lu", bipbuf.size());
 		return true;
 	}
 
@@ -106,7 +112,7 @@ namespace Communicator
 	void ask_for_exit()
 	{
 		please_exit.store(true, std::memory_order::relaxed);
-		//xSemaphoreGive(sync_semaphore);
+		Board::give_sem_emergency();
 	}
 
 	bool check_if_should_exit()

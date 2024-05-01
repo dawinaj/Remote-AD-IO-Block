@@ -16,7 +16,7 @@ class MCP23008
 	uint8_t address; // Hardware address of the device
 
 public:
-	uint8_t gpio;
+	uint8_t gpio = 0;
 
 private:
 	enum class Register : uint8_t
@@ -44,9 +44,13 @@ public:
 		ESP_LOGI(TAG, "Destructed with port: %d, address: %d", port, address);
 	}
 
-	esp_err_t init()
+	esp_err_t init(bool out = false)
 	{
-		gpio = 0;
+		if (out)
+			ESP_RETURN_ON_ERROR(
+				set_direction(0),
+				TAG, "Failed to set_direction!");
+
 		ESP_RETURN_ON_ERROR(
 			set_pins(),
 			TAG, "Failed to set_pins!");

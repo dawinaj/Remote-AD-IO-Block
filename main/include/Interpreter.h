@@ -1,4 +1,5 @@
 #pragma once
+#include "COMMON.h"
 
 #include <string>
 #include <vector>
@@ -102,7 +103,7 @@ namespace Interpreter
 	class Scope
 	{
 		std::vector<AnyStatement> statements;
-		size_t index = 0;
+		mutable size_t index = 0;
 
 	public:
 		Scope();
@@ -110,13 +111,15 @@ namespace Interpreter
 		// DEFAULT_CP_CTOR(Scope) // illegal, cant copy vector with uniqueptrs
 		DEFAULT_MV_CTOR(Scope)
 
-		StmtPtr getStmt();
-		bool finished();
-		void reset();
-		void restart();
+		StmtPtr getStmt() const;
+		bool finished() const;
+		void reset() const;
+		void restart() const;
 
 		Statement &appendStmt(const Statement & = Statement());
 		Loop &appendLoop(size_t);
+
+		size_t size() const;
 	};
 
 	//
@@ -125,7 +128,7 @@ namespace Interpreter
 	{
 		Scope scope;
 		size_t max_iter = 0;
-		size_t iter = 0;
+		mutable size_t iter = 0;
 
 	public:
 		Loop(size_t = 0);
@@ -133,11 +136,11 @@ namespace Interpreter
 		// DEFAULT_CP_CTOR(Loop)
 		// DEFAULT_MV_CTOR(Loop)
 
-		StmtPtr getStmt();
-		bool finished();
+		StmtPtr getStmt() const;
+		bool finished() const;
 
-		void reset();
-		void restart();
+		void reset() const;
+		void restart() const;
 
 		Scope &getScope();
 	};
@@ -156,8 +159,10 @@ namespace Interpreter
 
 		bool parse(const std::string &, std::vector<std::string> &);
 
-		StmtPtr getStmt();
-		void reset();
+		StmtPtr getStmt() const;
+		void reset() const;
+
+		size_t size() const;
 	};
 
 	//////

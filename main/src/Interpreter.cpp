@@ -9,6 +9,8 @@
 
 using namespace std::string_literals;
 
+static const char *TAG = "Interpreter";
+
 #define PARSE_ERR(reason)                                                \
 	do                                                                   \
 	{                                                                    \
@@ -72,12 +74,12 @@ namespace Interpreter
 	Scope::Scope() = default;
 	Scope::~Scope() = default;
 
-	StmtPtr Scope::getStmt()
+	StmtPtr Scope::getStmt() const
 	{
 		if (finished()) [[unlikely]] // never
 			return nullstmt;
 
-		AnyStatement &stmt = statements[index];
+		const AnyStatement &stmt = statements[index];
 
 		switch (stmt.index()) // check type
 		{
@@ -88,7 +90,7 @@ namespace Interpreter
 		}
 		case 2: // loop
 		{
-			Loop &loop = *std::get<LoopPtr>(stmt);
+			const Loop &loop = *std::get<LoopPtr>(stmt);
 			StmtPtr ret = loop.getStmt();
 			if (loop.finished())
 			{
@@ -102,14 +104,14 @@ namespace Interpreter
 		}
 	}
 
-	bool Scope::finished()
+	bool Scope::finished() const
 	{
 		return index >= statements.size();
 	}
-	void Scope::reset()
+	void Scope::reset() const
 	{
 		index = 0;
-		for (AnyStatement &stmt : statements)
+		for (const AnyStatement &stmt : statements)
 		{
 			switch (stmt.index()) // check type
 			{
@@ -124,7 +126,7 @@ namespace Interpreter
 			}
 		}
 	}
-	void Scope::restart()
+	void Scope::restart() const
 	{
 		index = 0;
 	}
@@ -141,12 +143,17 @@ namespace Interpreter
 		return *std::get<LoopPtr>(statements.back());
 	}
 
+	size_t Scope::size() const
+	{
+		return statements.size();
+	}
+
 	// Loop
 
 	Loop::Loop(size_t mi) : max_iter(mi) {}
 	Loop::~Loop() = default;
 
-	StmtPtr Loop::getStmt()
+	StmtPtr Loop::getStmt() const
 	{
 		if (finished()) [[unlikely]] // never
 			return nullstmt;
@@ -162,16 +169,16 @@ namespace Interpreter
 		return ret;
 	}
 
-	bool Loop::finished()
+	bool Loop::finished() const
 	{
 		return iter >= max_iter;
 	}
-	void Loop::reset()
+	void Loop::reset() const
 	{
 		iter = 0;
 		scope.reset();
 	}
-	void Loop::restart()
+	void Loop::restart() const
 	{
 		iter = 0;
 	}
@@ -185,15 +192,20 @@ namespace Interpreter
 
 	// Program
 
-	StmtPtr Program::getStmt()
+	StmtPtr Program::getStmt() const
 	{
 		if (scope.finished()) [[unlikely]]
 			return nullstmt;
 		return scope.getStmt();
 	}
-	void Program::reset()
+	void Program::reset() const
 	{
 		scope.reset();
+	}
+
+	size_t Program::size() const
+	{
+		return scope.size();
 	}
 
 	// Parser
@@ -227,10 +239,14 @@ namespace Interpreter
 			std::string stmtstr = str.substr(beg, end - beg);
 			beg = end + 1;
 
-			if (stmtstr.empty()) // no command
-				continue;
+			// ESP_LOGD(TAG, "Cmd: `%s`", stmtstr.c_str());
+			//  if (stmtstr.empty()) // no command
+			//  	continue;
 
 			std::vector<std::string> args = str_split_on_whitespace(stmtstr); // split and strip WSs
+
+			if (args.empty()) // no command
+				continue;
 
 			// for (const auto& w : args)
 			// 	cout << '`' << w << '\'' << '\t';
@@ -279,6 +295,8 @@ namespace Interpreter
 
 				if (cs.cmd == Command::NOP)
 					PARSE_ERR("unknown command!");
+
+				scopes.top()->appendStmt(cs);
 			}
 		}
 

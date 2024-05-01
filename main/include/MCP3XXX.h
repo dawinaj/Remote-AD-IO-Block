@@ -172,7 +172,7 @@ public:
 		return out;
 	}
 
-	spi_transaction_t make_trx(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE) const
+	static spi_transaction_t make_trx(uint8_t chnl, mcp_adc_read_mode_t rdmd = MCP_ADC_READ_SINGLE)
 	{
 		// Request/Response format (tx/rx).
 		//

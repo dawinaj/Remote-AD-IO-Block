@@ -10,7 +10,7 @@ namespace Communicator
 {
 	constexpr const char *const TAG = "Communicator";
 
-	constexpr size_t buf_len = 8 * 1024;
+	constexpr size_t buf_len = 128 * 1024;
 
 	//
 

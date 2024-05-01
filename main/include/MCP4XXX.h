@@ -151,7 +151,7 @@ public:
 		*reinterpret_cast<uint32_t *>(trx.tx_data) = SPI_SWAP_DATA_TX(in, B);
 	}
 
-	spi_transaction_t make_trx(bool chnl, bool shdn = false, bool gain_x2 = false, bool ref_buf = false) const
+	static spi_transaction_t make_trx(bool chnl, bool shdn = false, bool gain_x2 = false, bool ref_buf = false)
 	{
 		// Request format (tx)
 		//  _     __ __

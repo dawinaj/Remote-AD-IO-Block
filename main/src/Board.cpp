@@ -14,6 +14,8 @@
 
 using Interpreter::Command;
 
+#define SYNC_USE_NOTIF_NOT_SEM 1
+
 namespace Board
 {
 	namespace
@@ -53,12 +55,17 @@ namespace Board
 
 		gptimer_handle_t sync_timer = nullptr;
 		gptimer_alarm_config_t sync_alarm_cfg = {};
+
+#if SYNC_USE_NOTIF_NOT_SEM
+		constexpr UBaseType_t notif_idx = 0;
+#else
 		DRAM_ATTR SemaphoreHandle_t sync_semaphore;
+#endif
 
 		// EXECUTION
 		uint64_t time_now = 0;
-		uint64_t &waitfor = sync_alarm_cfg.alarm_count;
-		bool wait_for_sem = true;
+		uint64_t &time_sync = sync_alarm_cfg.alarm_count;
+		DRAM_ATTR bool wait_for_sync = false;
 
 		// ADC/DAC TRANSACTIONS
 		std::array<spi_transaction_t, an_in_num> trx_in;
@@ -113,8 +120,8 @@ namespace Board
 	{
 		// Divider settings:       Min: 1V=>1V, Med: 10V=>1V, Max: 100V=>1V
 		// Gains settings: R=1Ohm; Min: 1mA=>1V, Med: 10mA=>1V, Max: 100mA=>1V
-		constexpr int32_t volt_divs[4] = {0, 1, 10, 100};	  // ratios of dividers | min range => min attn
-		constexpr int32_t curr_gains[4] = {5, 1000, 100, 10}; // gains of instr.amp | min range => max gain
+		constexpr num_t volt_divs[4] = {0, 1, 10, 100};		// ratios of dividers | min range => min attn
+		constexpr num_t curr_gains[4] = {5, 1000, 100, 10}; // gains of instr.amp | min range => max gain
 
 		// According to docs, Dout = 4096 * Uin/Uref. Assuming Uref=4096mV, Uin=Dout.
 		// Important to note, values are !stretched! and shifted!. 2048 = 0V, 0 = -4096mV, 4096 = 4096mV
@@ -168,7 +175,7 @@ namespace Board
 
 	static esp_err_t analog_input_range(Input in, AnIn_Range r)
 	{
-		if (in == Input::None || in == Input::Inv) [[unlikely]]
+		if (in == Input::None || in >= Input::Inv) [[unlikely]]
 			return ESP_ERR_INVALID_ARG;
 
 		uint8_t pos = static_cast<uint8_t>(in) - 1;
@@ -180,10 +187,10 @@ namespace Board
 	{
 		ESP_RETURN_ON_ERROR(
 			expander_a.set_pins(0x00),
-			TAG, "Failed to reset relays on a!");
+			TAG, "Failed to expander_a.set_pins!");
 		ESP_RETURN_ON_ERROR(
 			expander_b.set_pins(0x00),
-			TAG, "Failed to reset relays on b!");
+			TAG, "Failed to expander_a.set_pins!");
 
 		return ESP_OK;
 	}
@@ -193,13 +200,15 @@ namespace Board
 		uint8_t lower = range_to_expander_steering(an_in_range[0]) | range_to_expander_steering(an_in_range[1]) << 4;
 		uint8_t upper = range_to_expander_steering(an_in_range[2]) | range_to_expander_steering(an_in_range[3]) << 4;
 
+		// ESP_LOGV(TAG, "AIEN: " BYTE_TO_BINARY_PATTERN " " BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(lower), BYTE_TO_BINARY(upper));
+
 		ESP_RETURN_ON_ERROR(
 			expander_a.set_pins(lower),
-			TAG, "Failed to set relays on a!");
+			TAG, "Failed to expander_a.set_pins!");
 
 		ESP_RETURN_ON_ERROR(
 			expander_b.set_pins(upper),
-			TAG, "Failed to set relays on b!");
+			TAG, "Failed to expander_b.set_pins!");
 
 		return ESP_OK;
 	}
@@ -334,18 +343,43 @@ namespace Board
 	static IRAM_ATTR bool sync_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_ctx)
 	{
 		BaseType_t high_task_awoken = pdFALSE;
-		xSemaphoreGiveFromISR(sync_semaphore, &high_task_awoken);
+
+		if (wait_for_sync)
+#if SYNC_USE_NOTIF_NOT_SEM
+			vTaskNotifyGiveIndexedFromISR(execute_task, notif_idx, &high_task_awoken);
+#else
+			xSemaphoreGiveFromISR(sync_semaphore, &high_task_awoken);
+#endif
+		// ESP_EARLY_LOGI("TMRISR", "/|\\");
 		// return whether we need to yield at the end of ISR
 		return high_task_awoken == pdTRUE;
 	}
 
+#if SYNC_USE_NOTIF_NOT_SEM
+
+#define WAIT_FOR_SYNC                                                                   \
+	do                                                                                  \
+	{                                                                                   \
+		if (wait_for_sync)                                                              \
+			while (ulTaskNotifyTakeIndexed(notif_idx, pdTRUE, portMAX_DELAY) != pdTRUE) \
+				printf(",");                                                            \
+	} while (0)
+
+#define CLEAR_SYNC ulTaskNotifyTakeIndexed(notif_idx, pdTRUE, 0)
+
+#else
+
 #define WAIT_FOR_SYNC                                                       \
 	do                                                                      \
 	{                                                                       \
-		if (wait_for_sem)                                                   \
+		if (wait_for_sync)                                                  \
 			while (xSemaphoreTake(sync_semaphore, portMAX_DELAY) != pdTRUE) \
-				;                                                           \
+				printf(",");                                                \
 	} while (0)
+
+#define CLEAR_SYNC xSemaphoreTake(sync_semaphore, 0)
+
+#endif
 
 	static inline uint64_t &get_now()
 	{
@@ -353,34 +387,12 @@ namespace Board
 		return time_now;
 	}
 
-	static inline esp_err_t clear_now()
-	{
-		time_now = 0;
-		waitfor = 0;
-		wait_for_sem = false;
-
-		ESP_RETURN_ON_ERROR(
-			gptimer_stop(sync_timer),
-			TAG, "Failed to gptimer_stop!");
-
-		ESP_RETURN_ON_ERROR(
-			gptimer_set_raw_count(sync_timer, 0),
-			TAG, "Failed to gptimer_set_raw_count!");
-
-		ESP_RETURN_ON_ERROR(
-			gptimer_set_alarm_action(sync_timer, &sync_alarm_cfg),
-			TAG, "Failed to gptimer_set_alarm_action!");
-
-		ESP_RETURN_ON_ERROR(
-			gptimer_start(sync_timer),
-			TAG, "Failed to gptimer_start!");
-
-		return ESP_OK;
-	}
-
 	static void execute(void *arg)
 	{
 		__attribute__((unused)) esp_err_t ret; // used in on_false macros
+
+		Input in;
+		Output out;
 
 		ESP_LOGI(TAG, "Starting the Board executor...");
 		while (true)
@@ -391,20 +403,37 @@ namespace Board
 
 			ESP_LOGI(TAG, "Dispatched...");
 
+			// lock access
 			std::lock_guard<std::mutex> lock(data_mutex);
 
-			Input in;
-			Output out;
-
+			// prepare hardware
 			ESP_GOTO_ON_ERROR(
 				port_cleanup(),
 				label_fail, TAG, "Failed to port_cleanup!");
 
-			ESP_GOTO_ON_ERROR(
-				clear_now(),
-				label_fail, TAG, "Failed to clear_now!");
-
+			// prepare software
 			program.reset();
+
+			// letsgooo
+			time_now = 0;
+			time_sync = 0;
+			wait_for_sync = false;
+
+			ESP_GOTO_ON_ERROR(
+				gptimer_stop(sync_timer),
+				label_fail, TAG, "Failed to gptimer_stop!");
+
+			ESP_GOTO_ON_ERROR(
+				gptimer_set_raw_count(sync_timer, time_now),
+				label_fail, TAG, "Failed to gptimer_set_raw_count!");
+
+			ESP_GOTO_ON_ERROR(
+				gptimer_set_alarm_action(sync_timer, &sync_alarm_cfg),
+				label_fail, TAG, "Failed to gptimer_set_alarm_action!");
+
+			ESP_GOTO_ON_ERROR(
+				gptimer_start(sync_timer),
+				label_fail, TAG, "Failed to gptimer_start!");
 
 			while (true)
 			{
@@ -418,27 +447,26 @@ namespace Board
 				in = static_cast<Input>(stmt->port);
 				out = static_cast<Output>(stmt->port);
 
+				// ESP_LOGD(TAG, "Command: %" PRId32 ", argu: %" PRIu32 ", argf: %f, port: %" PRIu8, int32_t(stmt->cmd), stmt->arg.u, stmt->arg.f, stmt->port);
+
+				// ESP_LOGD(TAG, "Now: %" PRIu64 ", Wait: %" PRIu64, time_now, time_sync);
+
 				switch (stmt->cmd)
 				{
 				case Command::DELAY:
-					waitfor += stmt->arg.u;
+					time_sync += stmt->arg.u;
 					ESP_GOTO_ON_ERROR(
 						gptimer_set_alarm_action(sync_timer, &sync_alarm_cfg),
 						label_fail, TAG, "Failed to gptimer_set_alarm_action in Command::DELAY!");
-					wait_for_sem = (waitfor > get_now());
-					if (!wait_for_sem)
-						xSemaphoreTake(sync_semaphore, 0); // take in case of timer desync
+
+					wait_for_sync = (time_sync > get_now()); // and clear sync
 					goto label_nosync;
 					break;
 
 				case Command::GETTM:
-					get_now();
-					if (time_now >= waitfor)
-					{
-						waitfor = time_now;
-						wait_for_sem = false;
-						xSemaphoreTake(sync_semaphore, 0); // take in case of timer desync
-					}
+					wait_for_sync = (time_sync > get_now());
+					if (!wait_for_sync)
+						time_sync = time_now; // and clear sync
 					goto label_nosync;
 					break;
 
@@ -517,7 +545,7 @@ namespace Board
 				}
 				case Command::AOGEN:
 				{
-					MCP4922::in_t outval = value_to_dac(out, (stmt->arg.u < generators.size()) ? generators[stmt->arg.u].get(waitfor) : 0);
+					MCP4922::in_t outval = value_to_dac(out, (stmt->arg.u < generators.size()) ? generators[stmt->arg.u].get(time_sync) : 0);
 					WAIT_FOR_SYNC;
 					ESP_GOTO_ON_ERROR(
 						analog_output_write(out, outval),
@@ -551,9 +579,14 @@ namespace Board
 					break;
 				}
 
-				wait_for_sem = false;
+				wait_for_sync = false;
 
 			label_nosync:
+
+				if (!wait_for_sync)
+					CLEAR_SYNC;
+
+				// ESP_LOGV(TAG, "End of command");
 
 				ESP_GOTO_ON_FALSE(
 					comm_ok,
@@ -571,6 +604,7 @@ namespace Board
 
 			gptimer_stop(sync_timer);
 
+			ESP_LOGI(TAG, "Execution took %" PRIu64 "us", get_now());
 			ESP_LOGI(TAG, "Exiting...");
 			Communicator::confirm_exit();
 		}
@@ -598,6 +632,12 @@ namespace Board
 			gpio_set_direction(dig_out[i], GPIO_MODE_OUTPUT);
 
 		// ADC/DAC
+		for (size_t i = 0; i < an_in_num; ++i)
+			trx_in[i] = MCP3204::make_trx(i);
+
+		for (size_t i = 0; i < an_out_num; ++i)
+			trx_out[i] = MCP4922::make_trx(an_out_num - i - 1); // reversed, because rotated chip
+
 		ESP_RETURN_ON_ERROR(
 			adc.init(),
 			TAG, "Error in adc.init!");
@@ -605,12 +645,6 @@ namespace Board
 		ESP_RETURN_ON_ERROR(
 			dac.init(),
 			TAG, "Error in dac.init!");
-
-		for (size_t i = 0; i < an_in_num; ++i)
-			trx_in[i] = adc.make_trx(i);
-
-		for (size_t i = 0; i < an_out_num; ++i)
-			trx_out[i] = dac.make_trx(an_out_num - i - 1); // reversed, because rotated chip
 
 		ESP_RETURN_ON_ERROR(
 			adc.acquire_spi(),
@@ -620,15 +654,27 @@ namespace Board
 			dac.acquire_spi(),
 			TAG, "Error in dac.acquire_spi!");
 
+		// EXPANDER
+		ESP_RETURN_ON_ERROR(
+			expander_a.init(true),
+			TAG, "Error in expander_a.init!");
+
+		ESP_RETURN_ON_ERROR(
+			expander_b.init(true),
+			TAG, "Error in expander_b.init!");
+
 		// CLEANUP BOARD
 		ESP_RETURN_ON_ERROR(
 			port_cleanup(),
 			TAG, "Error in port_cleanup!");
 
 		// TIMER
+#if SYNC_USE_NOTIF_NOT_SEM
+#else
 		ESP_RETURN_ON_FALSE(
 			(sync_semaphore = xSemaphoreCreateBinary()),
 			ESP_ERR_NO_MEM, TAG, "Error in xSemaphoreCreateBinary!");
+#endif
 
 		constexpr gptimer_config_t timer_config = {
 			.clk_src = GPTIMER_CLK_SRC_DEFAULT,
@@ -689,13 +735,25 @@ namespace Board
 			gptimer_del_timer(sync_timer),
 			TAG, "Error in gptimer_del_timer!");
 
+#if SYNC_USE_NOTIF_NOT_SEM
+#else
 		vSemaphoreDelete(sync_semaphore); // void
 		sync_semaphore = nullptr;
+#endif
 
 		// CLEANUP BOARD
 		ESP_RETURN_ON_ERROR(
 			port_cleanup(),
 			TAG, "Error in port_cleanup!");
+
+		// EXPANDER
+		ESP_RETURN_ON_ERROR(
+			expander_a.deinit(),
+			TAG, "Error in expander_a.deinit!");
+
+		ESP_RETURN_ON_ERROR(
+			expander_b.deinit(),
+			TAG, "Error in expander_b.deinit!");
 
 		// ADC/DAC
 		ESP_RETURN_ON_ERROR(
@@ -729,6 +787,40 @@ namespace Board
 		generators = std::move(g);
 
 		data_mutex.unlock();
+		return ESP_OK;
+	}
+
+	esp_err_t give_sem_emergency()
+	{
+#if SYNC_USE_NOTIF_NOT_SEM
+		if (xTaskNotifyGiveIndexed(execute_task, notif_idx) != pdTRUE)
+#else
+		if (xSemaphoreGive(sync_semaphore) != pdTRUE)
+#endif
+			return ESP_FAIL;
+		return ESP_OK;
+	}
+
+	esp_err_t test()
+	{
+		uint8_t val = 1;
+		while (val)
+		{
+			expander_a.set_pins(val);
+			val <<= 1;
+			vTaskDelay(pdMS_TO_TICKS(1000));
+		}
+		expander_a.set_pins(val);
+
+		val = 1;
+		while (val)
+		{
+			expander_b.set_pins(val);
+			val <<= 1;
+			vTaskDelay(pdMS_TO_TICKS(1000));
+		}
+		expander_b.set_pins(val);
+
 		return ESP_OK;
 	}
 }

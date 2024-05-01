@@ -23,6 +23,8 @@ using namespace Interpreter;
 
 #include "json_helper.h"
 
+#include "SocketReader.h"
+
 //
 
 static const char *TAG = "WebServer";
@@ -76,122 +78,6 @@ auto parse_query(httpd_req_t *r)
 	// ret.erase("");
 	return ret;
 }
-
-//
-
-class SocketReader
-{
-	static constexpr int BUF_SIZE = 1024;
-
-public:
-	httpd_req_t *req;
-	esp_err_t err = ESP_OK;
-
-private:
-	char buffer[BUF_SIZE];
-	size_t dataLen = 0;
-	size_t ptr = 0;
-	// size_t totalOut = 0;
-	// size_t totalIn = 0;
-
-	void recv()
-	{
-		int ret = httpd_req_recv(req, buffer, BUF_SIZE);
-
-		if (ret < 0) // error
-		{
-			err = ret;
-			return;
-		}
-		dataLen = ret;
-		ptr = 0;
-		// totalOut = totalIn;
-		// totalIn += dataLen;
-	}
-
-public:
-	SocketReader(httpd_req_t *r) : req(r) {}
-	~SocketReader() = default;
-
-	class iterator
-	{
-		friend class SocketReader;
-
-	public:
-		using iterator_category = std::input_iterator_tag;
-		using value_type = char;
-		using difference_type = std::ptrdiff_t;
-		using pointer = char *;
-		using reference = char &;
-
-	private:
-		SocketReader *parent;
-
-		iterator(SocketReader *p) : parent(p) {}
-
-	public:
-		~iterator() = default;
-
-	public:
-		char operator*() const
-		{
-			if (parent->ptr >= parent->dataLen) [[unlikely]]
-				return '\0';
-			return parent->buffer[parent->ptr];
-		}
-
-		iterator &operator++()
-		{
-			if (parent->ptr >= parent->dataLen)
-				parent->recv();
-			return *this;
-		}
-
-		// iterator operator++(int) // does not exist, iterator pos is inside the parent
-		// {
-		// 	Iterator tmp = *this;
-		// 	++(*this);
-		// 	return tmp;
-		// }
-
-		bool operator==(const iterator &other) const
-		{
-			if (parent == other.parent) // If the same owner, then the same
-				return true;
-
-			if (other.parent == nullptr) // I am begin, other is end
-			{
-				if (parent->ptr >= parent->dataLen)
-					return true;
-			}
-			if (parent == nullptr) // I am end (who TF uses this order?)
-			{
-				if (other.parent->ptr >= other.parent->dataLen)
-					return true;
-			}
-
-			return false; // Completely different owners
-		}
-
-		// bool operator!=(const Iterator &other) const
-		// {
-		// 	return !(*this == other);
-		// }
-	};
-
-public:
-	iterator begin()
-	{
-		dataLen = 0;
-		ptr = 0;
-		return iterator(this);
-	}
-
-	iterator end()
-	{
-		return iterator(nullptr);
-	}
-};
 
 //
 
@@ -310,31 +196,19 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	if (Communicator::check_if_running())
 		return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Device is busy");
 
-	ESP_LOGV(TAG, "Req len: %i" PRIu32, req->content_len);
-
-	// std::string post(req->content_len, '\0'); // +- 1?
-	// int ret = httpd_req_recv(req, post.data(), req->content_len);
-	// if (ret <= 0) // failed to read
-	// {
-	// 	if (ret == HTTPD_SOCK_ERR_TIMEOUT)
-	// 		httpd_resp_send_408(req);
-	// 	return ESP_FAIL;
-	// }
-	// ESP_LOGV(TAG, "%s", post.c_str());
+	ESP_LOGV(TAG, "Req len: %" PRIu16, req->content_len);
 
 	Interpreter::Program program;
 	std::vector<Generator> generators;
 	std::vector<std::string> errors;
 
-	//	if (str_is_ascii(post))
-	//	{
+	ESP_LOGD(TAG, "Reading JSON...");
 	SocketReader reader(req);
-
 	ordered_json q = ordered_json::parse(reader.begin(), reader.end(), nullptr, false, true);
-	//	post.clear();
 
 	if (reader.err) // failed to read
 	{
+		ESP_LOGD(TAG, "Reader error");
 		if (reader.err == HTTPD_SOCK_ERR_TIMEOUT)
 			httpd_resp_send_408(req);
 		return reader.err;
@@ -345,6 +219,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 		//*/
 		if (q.contains("generators") && q.at("generators").is_array())
 		{
+			ESP_LOGD(TAG, "Generators exists, trying...");
 			// parse generators
 			size_t count = q.at("generators").size();
 			generators.reserve(count);
@@ -370,9 +245,11 @@ static esp_err_t settings_handler(httpd_req_t *req)
 		//*/
 		if (q.contains("program") && q.at("program").is_string())
 		{
+			ESP_LOGD(TAG, "Program exists, trying...");
 			// parse program
 			const std::string &prg = q.at("program").get_ref<const std::string &>();
 			program.parse(prg, errors);
+			ESP_LOGD(TAG, "Program has %u statements", program.size());
 			q.erase("program");
 		}
 		//*/
@@ -382,10 +259,12 @@ static esp_err_t settings_handler(httpd_req_t *req)
 
 	q.clear();
 
+	ESP_LOGD(TAG, "Moving configs...");
 	if (Board::move_config(program, generators) != ESP_OK)
 		return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Device is busy");
 
 	//
+	ESP_LOGD(TAG, "Responding...");
 
 	httpd_resp_set_type(req, "application/json");
 
@@ -437,30 +316,43 @@ static esp_err_t io_handler(httpd_req_t *req)
 	// Start consumer
 	ESP_LOGI(TAG, "Running consumer...");
 	httpd_resp_set_type(req, "application/octet-stream");
+
+	size_t total_sent = 0;
+	esp_err_t ret = ESP_OK;
+
 	while (true)
 	{
-		vTaskDelay(1);
 		auto rsvd = Communicator::get_read();
 
 		if (/*rsvd.data() == nullptr ||*/ rsvd.size() == 0)
 		{
 			if (Communicator::check_if_running())
+			{
+				vTaskDelay(1);
 				continue;
+			}
 			else
 				break;
 		}
 
 		ESP_LOGI(TAG, "Sending %zu bytes...", rsvd.size());
-		esp_err_t ret = httpd_resp_send_chunk(req, rsvd.data(), rsvd.size());
+
+		ret = httpd_resp_send_chunk(req, rsvd.data(), rsvd.size());
+		total_sent += rsvd.size();
 
 		Communicator::commit_read();
 
 		if (ret != ESP_OK)
 		{
 			Communicator::ask_for_exit();
-			return ret;
+			break;
 		}
+		taskYIELD();
 	}
+	ESP_LOGW(TAG, "Total sent: %zu bytes...", total_sent);
+
+	if (ret != ESP_OK)
+		return ret;
 
 	return httpd_resp_send_chunk(req, nullptr, 0);
 }

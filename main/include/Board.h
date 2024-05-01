@@ -52,10 +52,14 @@ namespace Board
 
 	constexpr float u_ref = 4.096;
 	constexpr float ccvs_transresistance = 1.0;
-	constexpr float vccs_transconductance = 0.1; // or 0.01?
+	constexpr float vccs_transconductance = 0.01; // 100mA per 10V => 1V = 0.01A
 
 	esp_err_t init();
 	esp_err_t deinit();
 
 	esp_err_t move_config(Interpreter::Program &, std::vector<Generator> &);
+
+	esp_err_t give_sem_emergency();
+
+	esp_err_t test();
 };
