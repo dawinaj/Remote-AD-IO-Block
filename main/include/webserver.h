@@ -9,3 +9,5 @@
 
 esp_err_t start_webserver();
 esp_err_t stop_webserver();
+
+bool httpd_req_check_live(httpd_req_t*);

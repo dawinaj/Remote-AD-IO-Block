@@ -74,24 +74,24 @@ namespace Interpreter
 	Scope::Scope() = default;
 	Scope::~Scope() = default;
 
-	StmtPtr Scope::getStmt() const
+	InstrPtr Scope::getInstr() const
 	{
 		if (finished()) [[unlikely]] // never
-			return nullstmt;
+			return nullinstr;
 
-		const AnyStatement &stmt = statements[index];
+		const Statement &stmt = statements[index];
 
 		switch (stmt.index()) // check type
 		{
 		case 1: // cmd
 		{
 			++index;
-			return &std::get<Statement>(stmt);
+			return &std::get<Instruction>(stmt);
 		}
 		case 2: // loop
 		{
 			const Loop &loop = *std::get<LoopPtr>(stmt);
-			StmtPtr ret = loop.getStmt();
+			InstrPtr ret = loop.getInstr();
 			if (loop.finished())
 			{
 				++index;
@@ -100,7 +100,7 @@ namespace Interpreter
 			return ret;
 		}
 		default:
-			return nullstmt;
+			return nullinstr;
 		}
 	}
 
@@ -111,7 +111,7 @@ namespace Interpreter
 	void Scope::reset() const
 	{
 		index = 0;
-		for (const AnyStatement &stmt : statements)
+		for (const Statement &stmt : statements)
 		{
 			switch (stmt.index()) // check type
 			{
@@ -131,10 +131,10 @@ namespace Interpreter
 		index = 0;
 	}
 
-	Statement &Scope::appendStmt(const Statement &c)
+	Instruction &Scope::appendInstr(const Instruction &c)
 	{
-		statements.emplace_back(std::in_place_type<Statement>, c);
-		return std::get<Statement>(statements.back());
+		statements.emplace_back(std::in_place_type<Instruction>, c);
+		return std::get<Instruction>(statements.back());
 	}
 
 	Loop &Scope::appendLoop(size_t iters)
@@ -153,12 +153,12 @@ namespace Interpreter
 	Loop::Loop(size_t mi) : max_iter(mi) {}
 	Loop::~Loop() = default;
 
-	StmtPtr Loop::getStmt() const
+	InstrPtr Loop::getInstr() const
 	{
 		if (finished()) [[unlikely]] // never
-			return nullstmt;
+			return nullinstr;
 
-		StmtPtr ret = scope.getStmt();
+		InstrPtr ret = scope.getInstr();
 
 		if (scope.finished())
 		{
@@ -192,11 +192,11 @@ namespace Interpreter
 
 	// Program
 
-	StmtPtr Program::getStmt() const
+	InstrPtr Program::getInstr() const
 	{
 		if (scope.finished()) [[unlikely]]
-			return nullstmt;
-		return scope.getStmt();
+			return nullinstr;
+		return scope.getInstr();
 	}
 	void Program::reset() const
 	{
@@ -278,13 +278,13 @@ namespace Interpreter
 			//*/
 			else // regular command
 			{
-				Statement cs;
+				Instruction cs;
 
 				for (const auto &lut : CS_LUT)
 				{
 					if (cmd == lut.namestr)
 					{
-						cs.cmd = lut.cmd;
+						cs.opc = lut.opc;
 
 						if ((args.size() != lut.argcnt) || (lut.parser && !lut.parser(args, cs)))
 							PARSE_ERR_SNTX(lut.namestr + ' ' + lut.argstr);
@@ -293,10 +293,10 @@ namespace Interpreter
 					}
 				}
 
-				if (cs.cmd == Command::NOP)
+				if (cs.opc == OPCode::NOP)
 					PARSE_ERR("unknown command!");
 
-				scopes.top()->appendStmt(cs);
+				scopes.top()->appendInstr(cs);
 			}
 		}
 

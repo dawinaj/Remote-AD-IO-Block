@@ -8,6 +8,8 @@
 #include <type_traits>
 using namespace std::literals;
 
+#include <sys/socket.h>
+
 #include <esp_event.h>
 
 #include "to_integer.h"
@@ -144,11 +146,12 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 
 	doc["message"] = "Welcome!\n"
 					 "Last compilation time: ${data.cmpl.date} ${data.cmpl.time}.\n"
-					 "Compiler version: ${data.cmpl.ver}.\n"
+					 "Compiler version: ${data.cmpl.vrsn}.\n"
+					 "ESP-IDF version: ${data.cmpl.idfv}.\n"
 					 "Go to ${data.url.sett} with POST JSON to write settings.\n"
 					 "Go to ${data.url.meas} to GET measured stuff.\n"
 					 "Settings JSON is an object with two keys:\n"
-					 "\t- \"program\" is a string, made of semicolon-separated statements (commands with arguments)\n"
+					 "\t- \"task\" is a string, made of semicolon-separated statements (commands with arguments)\n"
 					 "\t- \"generators\" is an array of amplitudes and waveforms\n"
 					 "List of existing commands with syntax and description: ${data.prg.cmds}.\n"
 					 "Exemplary generator of a sine signal: ${data.prg.gnrtr}.\n"
@@ -157,6 +160,7 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 	doc["data"]["cmpl"]["date"] = __DATE__;
 	doc["data"]["cmpl"]["time"] = __TIME__;
 	doc["data"]["cmpl"]["vrsn"] = __VERSION__;
+	doc["data"]["cmpl"]["idfv"] = esp_get_idf_version();
 
 	doc["data"]["url"]["sett"] = "/settings";
 	doc["data"]["url"]["meas"] = "/io";
@@ -234,7 +238,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 				catch (ordered_json::exception &e)
 				{
 					generators.emplace_back();
-					errors.push_back("Generator #"s + key + " failed to parse!");
+					errors.push_back("Generator #"s + key + " failed to parse: " + e.what());
 					ESP_LOGE(TAG, "%s", e.what());
 				}
 				val = nullptr;
@@ -243,14 +247,14 @@ static esp_err_t settings_handler(httpd_req_t *req)
 		}
 		//*/
 		//*/
-		if (q.contains("program") && q.at("program").is_string())
+		if (q.contains("task") && q.at("task").is_string())
 		{
-			ESP_LOGD(TAG, "Program exists, trying...");
+			ESP_LOGD(TAG, "Task exists, trying...");
 			// parse program
-			const std::string &prg = q.at("program").get_ref<const std::string &>();
+			const std::string &prg = q.at("task").get_ref<const std::string &>();
 			program.parse(prg, errors);
-			ESP_LOGD(TAG, "Program has %u statements", program.size());
-			q.erase("program");
+			ESP_LOGD(TAG, "Task has %u statements", program.size());
+			q.erase("task");
 		}
 		//*/
 	}
@@ -309,10 +313,6 @@ static esp_err_t io_handler(httpd_req_t *req)
 	Communicator::time_settings(time_bytes);
 	Communicator::cleanup();
 
-	// Start producer
-	ESP_LOGI(TAG, "Notifying producer...");
-	Communicator::start_running();
-
 	// Start consumer
 	ESP_LOGI(TAG, "Running consumer...");
 	httpd_resp_set_type(req, "application/octet-stream");
@@ -320,35 +320,41 @@ static esp_err_t io_handler(httpd_req_t *req)
 	size_t total_sent = 0;
 	esp_err_t ret = ESP_OK;
 
-	while (true)
+	// Start producer
+	ESP_LOGI(TAG, "Notifying producer...");
+	Communicator::start_running();
+
+	while (Communicator::check_if_running())
 	{
 		auto rsvd = Communicator::get_read();
 
-		if (/*rsvd.data() == nullptr ||*/ rsvd.size() == 0)
+		if (rsvd.size() != 0) // if something to send, send
 		{
-			if (Communicator::check_if_running())
+			ESP_LOGI(TAG, "Sending %zu bytes...", rsvd.size());
+
+			ret = httpd_resp_send_chunk(req, rsvd.data(), rsvd.size());
+			total_sent += rsvd.size();
+
+			Communicator::commit_read();
+
+			if (ret != ESP_OK)
+				Communicator::ask_for_exit();
+		}
+		else // if no new data
+		{
+			if (!httpd_req_check_live(req)) // check if dead, ask to stop
 			{
-				vTaskDelay(1);
-				continue;
+				ESP_LOGW(TAG, "Client disconnected...");
+				Communicator::ask_for_exit();
 			}
-			else
-				break;
 		}
 
-		ESP_LOGI(TAG, "Sending %zu bytes...", rsvd.size());
-
-		ret = httpd_resp_send_chunk(req, rsvd.data(), rsvd.size());
-		total_sent += rsvd.size();
-
-		Communicator::commit_read();
-
-		if (ret != ESP_OK)
-		{
-			Communicator::ask_for_exit();
-			break;
-		}
-		taskYIELD();
+		if (rsvd.size() != 0)
+			taskYIELD();
+		else
+			vTaskDelay(pdMS_TO_TICKS(10));
 	}
+
 	ESP_LOGW(TAG, "Total sent: %zu bytes...", total_sent);
 
 	if (ret != ESP_OK)
@@ -441,4 +447,19 @@ esp_err_t stop_webserver()
 		TAG, "Failed to httpd_stop!");
 
 	return ESP_OK;
+}
+
+bool httpd_req_check_live(httpd_req_t *req)
+{
+	if (req == nullptr)
+		return false;
+
+	int sockfd = httpd_req_to_sockfd(req);
+
+	char buf;
+
+	int ret = httpd_socket_recv(server, sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
+	return ret == HTTPD_SOCK_ERR_TIMEOUT;
+
+	//	return recv(sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT) != 0;
 }

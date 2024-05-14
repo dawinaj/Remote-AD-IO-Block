@@ -21,28 +21,7 @@
 
 namespace Interpreter
 {
-	using CmdUT = uint8_t;
-
-	// enum CmdDir : CmdUT
-	// {
-	// 	Analog = 0b10000000,
-	// 	Digital = 0b01000000,
-	// 	Misc = 0,
-	// };
-
-	// enum CmdTrait : CmdUT
-	// {
-
-	// 	Analog = 1 << 13,
-	// 	Digital = 1 << 12,
-	// 	Misc = 1 << 11,
-
-	// 	Read = 1 << 10,
-	// 	Write = 1 << 9,
-	// 	Other = 1 << 8,
-	// };
-
-	enum class Command : CmdUT
+	enum class OPCode : uint8_t
 	{
 		NOP = 0,
 
@@ -67,13 +46,12 @@ namespace Interpreter
 
 		DELAY,
 		GETTM,
-
 	};
 
-	class Statement
+	class Instruction
 	{
 	public:
-		Command cmd = Command::NOP;
+		OPCode opc = OPCode::NOP;
 		uint8_t port = 0;
 		union
 		{
@@ -81,28 +59,28 @@ namespace Interpreter
 			float f;
 		} arg;
 
-		Statement() = default;
-		~Statement() = default;
-		// DEFAULT_CP_CTOR(Statement)
-		// DEFAULT_MV_CTOR(Statement)
+		Instruction() = default;
+		~Instruction() = default;
+		// DEFAULT_CP_CTOR(Instruction)
+		// DEFAULT_MV_CTOR(Instruction)
 	};
 
 	//
 
-	using StmtPtr = const Statement *;
-	const StmtPtr nullstmt = nullptr;
+	using InstrPtr = const Instruction *;
+	constexpr InstrPtr nullinstr = nullptr;
 
 	//
 
 	class Loop;
 	using LoopPtr = std::unique_ptr<Loop>;
-	using AnyStatement = std::variant<std::monostate, Statement, LoopPtr>;
+	using Statement = std::variant<std::monostate, Instruction, LoopPtr>;
 
 	//
 
 	class Scope
 	{
-		std::vector<AnyStatement> statements;
+		std::vector<Statement> statements;
 		mutable size_t index = 0;
 
 	public:
@@ -111,12 +89,12 @@ namespace Interpreter
 		// DEFAULT_CP_CTOR(Scope) // illegal, cant copy vector with uniqueptrs
 		DEFAULT_MV_CTOR(Scope)
 
-		StmtPtr getStmt() const;
+		InstrPtr getInstr() const;
 		bool finished() const;
 		void reset() const;
 		void restart() const;
 
-		Statement &appendStmt(const Statement & = Statement());
+		Instruction &appendInstr(const Instruction & = Instruction());
 		Loop &appendLoop(size_t);
 
 		size_t size() const;
@@ -136,7 +114,7 @@ namespace Interpreter
 		// DEFAULT_CP_CTOR(Loop)
 		// DEFAULT_MV_CTOR(Loop)
 
-		StmtPtr getStmt() const;
+		InstrPtr getInstr() const;
 		bool finished() const;
 
 		void reset() const;
@@ -159,7 +137,7 @@ namespace Interpreter
 
 		bool parse(const std::string &, std::vector<std::string> &);
 
-		StmtPtr getStmt() const;
+		InstrPtr getInstr() const;
 		void reset() const;
 
 		size_t size() const;
@@ -167,11 +145,11 @@ namespace Interpreter
 
 	//////
 
-	using ParseCb = std::function<bool(const std::vector<std::string> &, Statement &)>; // in args, out stmt
+	using ParseCb = std::function<bool(const std::vector<std::string> &, Instruction &)>; // in args, inout instr
 
-	struct StmtLUTRow
+	struct InstrLUTRow
 	{
-		Interpreter::Command cmd;
+		Interpreter::OPCode opc;
 		const char *namestr;
 		const char *argstr;
 		const char *descstr;
@@ -179,5 +157,5 @@ namespace Interpreter
 		ParseCb parser;
 	};
 
-	extern const std::vector<StmtLUTRow> CS_LUT;
+	extern const std::vector<InstrLUTRow> CS_LUT;
 };

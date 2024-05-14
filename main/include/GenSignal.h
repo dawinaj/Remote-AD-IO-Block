@@ -76,10 +76,16 @@ class Signal
 protected:
 	static inline float ang_to_sine(float ang) // Full sine cycle on <0, 1>, duplicated to negatives for simplicity
 	{
-		float aang = std::abs(ang);
-		bool flip = std::signbit(ang) != (aang > 0.5f);
+		bool flip = std::signbit(ang);
+		ang = std::abs(ang);
+		if (ang > 0.5f)
+		{
+			ang -= 0.5f;
+			flip = !flip;
+		}
 
-		float smpl = 16.0f * aang * (0.5f - aang);
+		float smpl = 16.0f * ang * (0.5f - ang);
+		return flip ? -smpl : smpl;
 		float bhskr = 4.0f * smpl / (5.0f - smpl);
 		return flip ? -bhskr : bhskr;
 	}
@@ -190,28 +196,34 @@ public:
 class SignalTriangle : public Signal
 {
 	index_t T;
+	index_t P;
 
 public:
-	SignalTriangle(index_t t = 1) : T(t) {}
+	SignalTriangle(index_t t = 1, index_t p = 1) : T(t), P(p) {}
 	~SignalTriangle() = default;
 
 	float get(index_t i) const override
 	{
 		i = i % T;
-		float x = float(i) / T;
 
-		if (4 * i < T)
-			return x * 4.0f;
-		if (4 * i > 3 * T)
-			return (x - 1) * 4.0f;
-		return (0.5f - x) * 4.0f;
+		if (i == 0) // to avoid division when P=0
+			return 0.0f;
+
+		if (i <= P) // rising pos edge
+			return static_cast<float>(i) / P;
+
+		if (i >= T - P) // rising neg edge
+			return static_cast<float>(i - T) / P;
+
+		// falling edge
+		return static_cast<float>(T / 2 - i) / (T / 2 - P);
 	}
 	SignalType type() const override
 	{
 		return SignalType::Triangle;
 	}
 
-	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalTriangle, T);
+	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalTriangle, T, P);
 };
 
 class SignalChirp : public Signal
@@ -307,12 +319,14 @@ inline void from_json(const json &j, SignalHdl &o)
 	case SignalType::Triangle:
 		o = make_signal<SignalTriangle>(j);
 		break;
+	case SignalType::Chirp:
+		o = make_signal<SignalChirp>(j);
+		break;
 	case SignalType::Delay:
 		o = make_signal<SignalDelay>(j);
 		break;
 	default:
-		o = make_signal<Signal>();
-		break;
+		throw std::invalid_argument("Unknown generator type!");
 	}
 }
 inline void to_json(json &j, const SignalHdl &o)
@@ -338,11 +352,14 @@ inline void to_json(json &j, const SignalHdl &o)
 	case SignalType::Triangle:
 		j = *static_cast<SignalTriangle *>(o.ptr.get());
 		break;
+	case SignalType::Chirp:
+		j = *static_cast<SignalChirp *>(o.ptr.get());
+		break;
 	case SignalType::Delay:
 		j = *static_cast<SignalDelay *>(o.ptr.get());
 		break;
 	default:
-		break;
+		throw std::invalid_argument("Unknown generator type!");
 	}
 
 	j["WF"] = t;

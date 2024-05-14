@@ -1,6 +1,6 @@
 #pragma once
 
-#define CB_HELP(COND) [](const std::vector<std::string> &args, Statement &cs) { return (COND); }
+#define CB_HELP(COND) [](const std::vector<std::string> &args, Instruction &cs) { return (COND); }
 #define READ_IP (try_parse_integer(args[0], cs.port) && (cs.port >= 1 && cs.port <= 4))
 #define READ_OP (try_parse_integer(args[0], cs.port) && (cs.port >= 1 && cs.port <= 2))
 #define READ_DO (try_parse_integer(args[0], cs.arg.u, 0) && (cs.arg.u <= 0b1111))
@@ -10,9 +10,9 @@
 #define SNTX_NO "<no args>"
 #define SNTX_DO "<state (4-bit hex/oct/dec int)>"
 
-const std::vector<StmtLUTRow> CS_LUT = {
+const std::vector<InstrLUTRow> CS_LUT = {
 	{
-		Command::NOP,
+		OPCode::NOP,
 		"NOP",
 		SNTX_NO,
 		"No OPeration - does nothing, does not parse, do not use",
@@ -21,7 +21,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 	},
 	//
 	{
-		Command::AIRDF,
+		OPCode::AIRDF,
 		"AIRDF",
 		SNTX_IP,
 		"Analog Input ReaD Float - returns measurement (V, A) as 32-bit float",
@@ -29,7 +29,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(READ_IP),
 	},
 	{
-		Command::AIRDM,
+		OPCode::AIRDM,
 		"AIRDM",
 		SNTX_IP,
 		"Analog Input ReaD Milli - returns measurement (mV, mA) as 32-bit int",
@@ -37,7 +37,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(READ_IP),
 	},
 	{
-		Command::AIRDU,
+		OPCode::AIRDU,
 		"AIRDU",
 		SNTX_IP,
 		"Analog Input ReaD Micro - returns measurement (uV, uA) as 32-bit int",
@@ -46,7 +46,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 	},
 	//
 	{
-		Command::AIEN,
+		OPCode::AIEN,
 		"AIEN",
 		SNTX_NO,
 		"Analog Input ENable - turns on input ports connections",
@@ -54,7 +54,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(true),
 	},
 	{
-		Command::AIDIS,
+		OPCode::AIDIS,
 		"AIDIS",
 		SNTX_NO,
 		"Analog Input DISable - turns off input ports connections",
@@ -62,7 +62,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(true),
 	},
 	{
-		Command::AIRNG,
+		OPCode::AIRNG,
 		"AIRNG",
 		SNTX_IP " <range (OFF|MIN|MED|MAX)>",
 		"Analog Input RaNGe - sets the range of port (selects divider/multiplier gain)",
@@ -71,7 +71,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 	},
 	//
 	{
-		Command::AOVAL,
+		OPCode::AOVAL,
 		"AOVAL",
 		SNTX_OP " <voltage (float)>",
 		"Analog Output VALue - outputs value to port",
@@ -79,7 +79,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(READ_OP && (try_parse_floating_point(args[1], cs.arg.f) && std::isfinite(cs.arg.f))),
 	},
 	{
-		Command::AOGEN,
+		OPCode::AOGEN,
 		"AOGEN",
 		SNTX_OP " <generator_idx (uint)>",
 		"Analog Output GENerator - outputs value created by the chosen Generator to port",
@@ -88,7 +88,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 	},
 	//
 	{
-		Command::DIRD,
+		OPCode::DIRD,
 		"DIRD",
 		SNTX_NO,
 		"Digital Inputs ReaD - returns state of pins as 32-bit uint",
@@ -97,7 +97,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 	},
 	//
 	{
-		Command::DOWR,
+		OPCode::DOWR,
 		"DOWR",
 		SNTX_DO,
 		"Digital Outputs WRite - directly writes the state to the pins",
@@ -105,7 +105,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(READ_DO),
 	},
 	{
-		Command::DOSET,
+		OPCode::DOSET,
 		"DOSET",
 		SNTX_DO,
 		"Digital Outputs SET - turns ON pins corresponding to set bits (bitwise OR)",
@@ -113,7 +113,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(READ_DO),
 	},
 	{
-		Command::DORST,
+		OPCode::DORST,
 		"DORST",
 		SNTX_DO,
 		"Digital Outputs ReSeT - turns OFF pins corresponding to set bits",
@@ -121,7 +121,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(READ_DO),
 	},
 	{
-		Command::DOAND,
+		OPCode::DOAND,
 		"DOAND",
 		SNTX_DO,
 		"Digital Outputs AND - turns OFF pins corresponding to unset bits (bitwise AND)",
@@ -129,7 +129,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(READ_DO),
 	},
 	{
-		Command::DOXOR,
+		OPCode::DOXOR,
 		"DOXOR",
 		SNTX_DO,
 		"Digital Outputs XOR - performs a bitwise eXclusive OR operation",
@@ -138,7 +138,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 	},
 	//
 	{
-		Command::DELAY,
+		OPCode::DELAY,
 		"DELAY",
 		"<microseconds (uint32)>",
 		"DELAY - sets the next synchronization timestamp based on last timestamp",
@@ -146,7 +146,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(try_parse_integer(args[0], cs.arg.u)),
 	},
 	{
-		Command::GETTM,
+		OPCode::GETTM,
 		"GETTM",
 		SNTX_NO,
 		"GET TiMe - sets the next synchronization timestamp to now",
@@ -155,7 +155,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 	},
 	//
 	{
-		Command::NOP,
+		OPCode::NOP,
 		"LOOP",
 		"<iterations (uint32)>",
 		"LOOP - repeats the code between itself and matching ENDLOOP specified number of times",
@@ -163,7 +163,7 @@ const std::vector<StmtLUTRow> CS_LUT = {
 		CB_HELP(false),
 	},
 	{
-		Command::NOP,
+		OPCode::NOP,
 		"ENDLOOP",
 		SNTX_NO,
 		"END LOOP - closing of previous LOOP",

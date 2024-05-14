@@ -12,7 +12,7 @@
 
 #include "Communicator.h"
 
-using Interpreter::Command;
+using Interpreter::OPCode;
 
 #define SYNC_USE_NOTIF_NOT_SEM 1
 
@@ -439,38 +439,38 @@ namespace Board
 			{
 				bool comm_ok = true;
 
-				Interpreter::StmtPtr stmt = program.getStmt();
+				Interpreter::InstrPtr stmt = program.getInstr();
 
-				if (stmt == Interpreter::nullstmt) [[unlikely]]
+				if (stmt == Interpreter::nullinstr) [[unlikely]]
 					break;
 
 				in = static_cast<Input>(stmt->port);
 				out = static_cast<Output>(stmt->port);
 
-				// ESP_LOGD(TAG, "Command: %" PRId32 ", argu: %" PRIu32 ", argf: %f, port: %" PRIu8, int32_t(stmt->cmd), stmt->arg.u, stmt->arg.f, stmt->port);
+				// ESP_LOGD(TAG, "OPCode: %" PRId32 ", argu: %" PRIu32 ", argf: %f, port: %" PRIu8, int32_t(stmt->opc), stmt->arg.u, stmt->arg.f, stmt->port);
 
 				// ESP_LOGD(TAG, "Now: %" PRIu64 ", Wait: %" PRIu64, time_now, time_sync);
 
-				switch (stmt->cmd)
+				switch (stmt->opc)
 				{
-				case Command::DELAY:
+				case OPCode::DELAY:
 					time_sync += stmt->arg.u;
 					ESP_GOTO_ON_ERROR(
 						gptimer_set_alarm_action(sync_timer, &sync_alarm_cfg),
-						label_fail, TAG, "Failed to gptimer_set_alarm_action in Command::DELAY!");
+						label_fail, TAG, "Failed to gptimer_set_alarm_action in OPCode::DELAY!");
 
 					wait_for_sync = (time_sync > get_now()); // and clear sync
 					goto label_nosync;
 					break;
 
-				case Command::GETTM:
+				case OPCode::GETTM:
 					wait_for_sync = (time_sync > get_now());
 					if (!wait_for_sync)
 						time_sync = time_now; // and clear sync
 					goto label_nosync;
 					break;
 
-				case Command::DIRD:
+				case OPCode::DIRD:
 				{
 					WAIT_FOR_SYNC;
 					uint32_t val;
@@ -479,103 +479,103 @@ namespace Board
 					break;
 				}
 
-				case Command::DOWR:
+				case OPCode::DOWR:
 					WAIT_FOR_SYNC;
 					digital_outputs_wr(stmt->arg.u);
 					break;
-				case Command::DOSET:
+				case OPCode::DOSET:
 					WAIT_FOR_SYNC;
 					digital_outputs_set(stmt->arg.u);
 					break;
-				case Command::DORST:
+				case OPCode::DORST:
 					WAIT_FOR_SYNC;
 					digital_outputs_rst(stmt->arg.u);
 					break;
-				case Command::DOAND:
+				case OPCode::DOAND:
 					WAIT_FOR_SYNC;
 					digital_outputs_and(stmt->arg.u);
 					break;
-				case Command::DOXOR:
+				case OPCode::DOXOR:
 					WAIT_FOR_SYNC;
 					digital_outputs_xor(stmt->arg.u);
 					break;
 
-				case Command::AIRDF:
+				case OPCode::AIRDF:
 				{
 					WAIT_FOR_SYNC;
 					MCP3204::out_t rd;
 					ESP_GOTO_ON_ERROR(
 						analog_input_read(in, rd),
-						label_fail, TAG, "Failed to analog_input_read in Command::AIRDF!");
+						label_fail, TAG, "Failed to analog_input_read in OPCode::AIRDF!");
 					float val = adc_to_value<float>(in, rd);
 					comm_ok = Communicator::write_data(get_now(), val);
 					break;
 				}
-				case Command::AIRDM:
+				case OPCode::AIRDM:
 				{
 					WAIT_FOR_SYNC;
 					MCP3204::out_t rd;
 					ESP_GOTO_ON_ERROR(
 						analog_input_read(in, rd),
-						label_fail, TAG, "Failed to analog_input_read in Command::AIRDM!");
+						label_fail, TAG, "Failed to analog_input_read in OPCode::AIRDM!");
 					int32_t val = adc_to_value<int32_t, 1'000>(in, rd);
 					comm_ok = Communicator::write_data(get_now(), val);
 					break;
 				}
-				case Command::AIRDU:
+				case OPCode::AIRDU:
 				{
 					WAIT_FOR_SYNC;
 					MCP3204::out_t rd;
 					ESP_GOTO_ON_ERROR(
 						analog_input_read(in, rd),
-						label_fail, TAG, "Failed to analog_input_read in Command::AIRDU!");
+						label_fail, TAG, "Failed to analog_input_read in OPCode::AIRDU!");
 					int32_t val = adc_to_value<int32_t, 1'000'000>(in, rd);
 					comm_ok = Communicator::write_data(get_now(), val);
 					break;
 				}
 
-				case Command::AOVAL:
+				case OPCode::AOVAL:
 				{
 					MCP4922::in_t outval = value_to_dac(out, stmt->arg.f);
 					WAIT_FOR_SYNC;
 					ESP_GOTO_ON_ERROR(
 						analog_output_write(out, outval),
-						label_fail, TAG, "Failed to analog_output_write in Command::AOVAL!");
+						label_fail, TAG, "Failed to analog_output_write in OPCode::AOVAL!");
 					break;
 				}
-				case Command::AOGEN:
+				case OPCode::AOGEN:
 				{
 					MCP4922::in_t outval = value_to_dac(out, (stmt->arg.u < generators.size()) ? generators[stmt->arg.u].get(time_sync) : 0);
 					WAIT_FOR_SYNC;
 					ESP_GOTO_ON_ERROR(
 						analog_output_write(out, outval),
-						label_fail, TAG, "Failed to analog_output_write in Command::AOGEN!");
+						label_fail, TAG, "Failed to analog_output_write in OPCode::AOGEN!");
 					break;
 				}
 
-				case Command::AIEN:
+				case OPCode::AIEN:
 					WAIT_FOR_SYNC;
 					ESP_GOTO_ON_ERROR(
 						analog_inputs_enable(),
-						label_fail, TAG, "Failed to analog_inputs_enable in Command::AOVAL!");
+						label_fail, TAG, "Failed to analog_inputs_enable in OPCode::AOVAL!");
 					break;
-				case Command::AIDIS:
+				case OPCode::AIDIS:
 					WAIT_FOR_SYNC;
 					ESP_GOTO_ON_ERROR(
 						analog_inputs_disable(),
-						label_fail, TAG, "Failed to analog_inputs_disable in Command::AIDIS!");
+						label_fail, TAG, "Failed to analog_inputs_disable in OPCode::AIDIS!");
 					break;
-				case Command::AIRNG:
+				case OPCode::AIRNG:
 					WAIT_FOR_SYNC;
 					ESP_GOTO_ON_ERROR(
 						analog_input_range(in, static_cast<AnIn_Range>(stmt->arg.u)),
-						label_fail, TAG, "Failed to analog_input_range in Command::AIRNG!");
+						label_fail, TAG, "Failed to analog_input_range in OPCode::AIRNG!");
 					break;
 
-				case Command::NOP:
+				case OPCode::NOP:
 					ESP_GOTO_ON_FALSE(
 						false, ESP_FAIL,
-						label_fail, TAG, "Failed in Command::NOP!");
+						label_fail, TAG, "Failed in OPCode::NOP!");
 					break;
 				}
 
