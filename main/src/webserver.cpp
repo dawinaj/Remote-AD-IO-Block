@@ -335,7 +335,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	std::string out = res.dump();
 	res.clear();
 
-	ESP_LOGD(TAG, "Handler done.");
+	ESP_LOGI(TAG, "Handler done.");
 	return httpd_resp_send(req, out.c_str(), out.length());
 }
 
