@@ -9,15 +9,9 @@
 
 #include <functional>
 
+#include "CTOR.h"
+
 //
-
-#define DEFAULT_CP_CTOR(Class)   \
-	Class(Class &rhs) = default; \
-	Class &operator=(Class &rhs) = default;
-
-#define DEFAULT_MV_CTOR(Class)    \
-	Class(Class &&rhs) = default; \
-	Class &operator=(Class &&rhs) = default;
 
 namespace Interpreter
 {
@@ -46,11 +40,13 @@ namespace Interpreter
 
 		DELAY,
 		GETTM,
+		RSTTM,
+
+		INV = uint8_t(-1),
 	};
 
-	class Instruction
+	struct Instruction
 	{
-	public:
 		OPCode opc = OPCode::NOP;
 		uint8_t port = 0;
 		union
@@ -58,11 +54,6 @@ namespace Interpreter
 			uint32_t u = 0;
 			float f;
 		} arg;
-
-		Instruction() = default;
-		~Instruction() = default;
-		// DEFAULT_CP_CTOR(Instruction)
-		// DEFAULT_MV_CTOR(Instruction)
 	};
 
 	//
@@ -84,10 +75,9 @@ namespace Interpreter
 		mutable size_t index = 0;
 
 	public:
-		Scope();
-		~Scope();
-		// DEFAULT_CP_CTOR(Scope) // illegal, cant copy vector with uniqueptrs
-		DEFAULT_MV_CTOR(Scope)
+		DEFAULT_CTOR(Scope);
+		// DEFAULT_CP_CTOR(Scope); // illegal, cant copy vector with uniqueptrs
+		DEFAULT_MV_CTOR(Scope);
 
 		InstrPtr getInstr() const;
 		bool finished() const;
@@ -128,12 +118,12 @@ namespace Interpreter
 	class Program
 	{
 		Scope scope;
+		bool prgValid = true;
 
 	public:
-		Program() = default;
-		~Program() = default;
-		// DEFAULT_CP_CTOR(Program)
-		DEFAULT_MV_CTOR(Program)
+		DEFAULT_CTOR(Program);
+		// DEFAULT_CP_CTOR(Program);
+		DEFAULT_MV_CTOR(Program);
 
 		bool parse(const std::string &, std::vector<std::string> &);
 
@@ -141,6 +131,8 @@ namespace Interpreter
 		void reset() const;
 
 		size_t size() const;
+
+		bool isValid() const;
 	};
 
 	//////

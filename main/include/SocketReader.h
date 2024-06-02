@@ -2,7 +2,7 @@
 
 class SocketReader
 {
-	static constexpr int BUF_SIZE = 1024;
+	static constexpr size_t BUF_SIZE = 1024;
 	static constexpr const char *const TAG = "SocketReader";
 
 public:
@@ -59,14 +59,12 @@ public:
 	public:
 		char operator*() const
 		{
-			// ESP_LOGV(TAG, "iterator::operator*");
 			assert(parent->ptr < parent->dataLen);
 			return parent->buffer[parent->ptr];
 		}
 
 		iterator &operator++()
 		{
-			// ESP_LOGV(TAG, "iterator::operator++");
 			++parent->ptr;
 			if (parent->ptr >= parent->dataLen)
 				parent->recv();
@@ -75,21 +73,14 @@ public:
 
 		bool operator==(const iterator &other) const
 		{
-			// ESP_LOGV(TAG, "iterator::operator==");
-
 			if (parent == other.parent) // If the same owner, then the same
 				return true;
 
 			if (other.parent == nullptr) // I am begin, other is end
-			{
-				if (parent->ptr >= parent->dataLen)
-					return true;
-			}
+				return parent->ptr >= parent->dataLen;
+
 			if (parent == nullptr) // I am end (who TF uses this order?)
-			{
-				if (other.parent->ptr >= other.parent->dataLen)
-					return true;
-			}
+				return other.parent->ptr >= other.parent->dataLen;
 
 			return false; // Completely different owners
 		}

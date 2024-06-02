@@ -15,7 +15,7 @@
 
 //
 
-#define BOARD_MEM (4 * 1024)
+#define BOARD_MEM (8 * 1024)
 #define BOARD_PRT (configMAX_PRIORITIES - 1)
 
 //
@@ -50,9 +50,16 @@ namespace Board
 {
 	constexpr const char *const TAG = "IOBoard";
 
-	constexpr float u_ref = 4.096;
-	constexpr float ccvs_transresistance = 1.0;
-	constexpr float vccs_transconductance = 0.01; // 100mA per 10V => 1V = 0.01A
+	constexpr double u_ref = 4.096;
+	constexpr double out_ref = u_ref / 2 / 2 * 10;
+
+	constexpr int32_t ItoU_input = 1;
+	constexpr int32_t UtoI_output = 100; // 100mA per 10V => 1V = 0.01A
+
+	// Divider settings:       Min: 1V=>1V, Med: 10V=>1V, Max: 100V=>1V
+	constexpr int32_t volt_divs[4] = {0, 1, 10, 100}; // ratios of dividers | min range => min attn
+	// Gains settings: R=1Ohm; Min: 1mA=>1V, Med: 10mA=>1V, Max: 100mA=>1V
+	constexpr int32_t curr_gains[4] = {5, 1000, 100, 10}; // gains of instr.amp | min range => max gain
 
 	esp_err_t init();
 	esp_err_t deinit();

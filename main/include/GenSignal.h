@@ -11,6 +11,9 @@
 #include "nlohmann/json.hpp"
 using namespace nlohmann;
 
+#include "CTOR.h"
+//
+
 enum SignalType : int8_t
 {
 	Virtual = 0,
@@ -20,9 +23,14 @@ enum SignalType : int8_t
 	Square,
 	Triangle,
 	Chirp,
+	ChirpLog,
 
 	Delay = std::numeric_limits<int8_t>::min(),
+	Absolute,
+	Clamp,
+	LinearMap,
 
+	Multiply,
 };
 
 NLOHMANN_JSON_SERIALIZE_ENUM(SignalType, {
@@ -33,7 +41,12 @@ NLOHMANN_JSON_SERIALIZE_ENUM(SignalType, {
 											 {SignalType::Square, "Square"},
 											 {SignalType::Triangle, "Triangle"},
 											 {SignalType::Chirp, "Chirp"},
+											 {SignalType::ChirpLog, "ChirpLog"},
 											 {SignalType::Delay, "Delay"},
+											 {SignalType::Absolute, "Absolute"},
+											 {SignalType::Clamp, "Clamp"},
+											 {SignalType::LinearMap, "LinearMap"},
+											 {SignalType::Multiply, "Multiply"},
 										 })
 
 //
@@ -45,14 +58,11 @@ class SignalHdl
 	SignalPtr ptr;
 
 public:
-	SignalHdl() = default;
-	SignalHdl(const SignalHdl &) = delete;
-	SignalHdl &operator=(const SignalHdl &) = delete;
-	SignalHdl(SignalHdl &&) = default;
-	SignalHdl &operator=(SignalHdl &&) = default;
+	DEFAULT_CTOR(SignalHdl);
+	DELETE_CP_CTOR(SignalHdl);
+	DEFAULT_MV_CTOR(SignalHdl);
 
 	SignalHdl(SignalPtr &&p) : ptr(std::move(p)) {}
-	~SignalHdl() = default;
 
 	Signal &operator*() const
 	{
@@ -71,8 +81,6 @@ public:
 
 class Signal
 {
-	friend SignalHdl;
-
 protected:
 	static inline float ang_to_sine(float ang) // Full sine cycle on <0, 1>, duplicated to negatives for simplicity
 	{
@@ -133,7 +141,7 @@ public:
 class SignalImpulse : public Signal
 {
 public:
-	SignalImpulse() {}
+	SignalImpulse() = default;
 	~SignalImpulse() = default;
 
 	float get(index_t i) const override
@@ -241,7 +249,7 @@ public:
 		i %= T;
 		float fr = static_cast<float>(i) / T;
 
-		float phs = i * (FS + 0.5f * FD * fr); // from the net, integral? idk
+		float phs = i * (FS + FD * fr * 0.5f);
 
 		float ang = std::fmod(phs, 1.0f);
 		return ang_to_sine(ang);
@@ -254,23 +262,54 @@ public:
 	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalChirp, T, FS, FD);
 };
 
+class SignalChirpLog : public Signal
+{
+	index_t T;
+	float FS;
+	float FR;
+
+public:
+	SignalChirpLog(index_t t = 1, float fs = 0, float fr = 0) : T(t), FS(fs), FR(fr) {}
+	~SignalChirpLog() = default;
+
+	float get(index_t i) const override
+	{
+		i %= T;
+		float fr = static_cast<float>(i) / T;
+
+		float phs = FS * T / std::log(FR) * (std::pow(FR, fr) - 1.0f) + FS;
+		//float phs = FS * T / std::log(FR) * std::pow(FR, fr);
+
+		float ang = std::fmod(phs, 1.0f);
+		return ang_to_sine(ang);
+	}
+	SignalType type() const override
+	{
+		return SignalType::ChirpLog;
+	}
+
+	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalChirpLog, T, FS, FR);
+};
+
+//
+
 class SignalDelay : public Signal
 {
 	index_t D = 0;
 	SignalHdl S;
 
 public:
-	SignalDelay() = default;
-	SignalDelay(index_t d, SignalHdl &&s) : D(d), S(std::move(s)) {}
+	// SignalDelay() = default;
+	SignalDelay(index_t d = 0, SignalHdl &&s = SignalHdl()) : D(d), S(std::move(s)) {}
 	~SignalDelay() = default;
 
-	SignalDelay(SignalDelay &&) = default;
-	SignalDelay &operator=(SignalDelay &&) = default;
+	// DELETE_CP_CTOR(SignalDelay);
+	DEFAULT_MV_CTOR(SignalDelay);
 
 	float get(index_t i) const override
 	{
-		if (i < D)
-			return 0;
+		//	if (i < D)
+		//		return 0;
 		return S->get(i - D);
 	}
 	SignalType type() const override
@@ -281,7 +320,102 @@ public:
 	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalDelay, D, S);
 };
 
-//
+class SignalAbsolute : public Signal
+{
+	SignalHdl S;
+
+public:
+	SignalAbsolute(SignalHdl &&s = SignalHdl()) : S(std::move(s)) {}
+	~SignalAbsolute() = default;
+
+	// DELETE_CP_CTOR(SignalAbsolute);
+	DEFAULT_MV_CTOR(SignalAbsolute);
+
+	float get(index_t i) const override
+	{
+		return std::abs(S->get(i));
+	}
+	SignalType type() const override
+	{
+		return SignalType::Absolute;
+	}
+
+	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalAbsolute, S);
+};
+
+class SignalClamp : public Signal
+{
+	float L;
+	float H;
+	SignalHdl S;
+
+public:
+	SignalClamp(float l = -1, float h = 1, SignalHdl &&s = SignalHdl()) : L(l), H(h), S(std::move(s)) {}
+	~SignalClamp() = default;
+
+	// DELETE_CP_CTOR(SignalClamp);
+	DEFAULT_MV_CTOR(SignalClamp);
+
+	float get(index_t i) const override
+	{
+		return std::clamp(S->get(i), L, H);
+	}
+	SignalType type() const override
+	{
+		return SignalType::Clamp;
+	}
+
+	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalClamp, L, H, S);
+};
+
+class SignalLinearMap : public Signal
+{
+	float A;
+	float B;
+	SignalHdl S;
+
+public:
+	SignalLinearMap(float a = 1, float b = 0, SignalHdl &&s = SignalHdl()) : A(a), B(b), S(std::move(s)) {}
+	~SignalLinearMap() = default;
+
+	// DELETE_CP_CTOR(SignalLinearMap);
+	DEFAULT_MV_CTOR(SignalLinearMap);
+
+	float get(index_t i) const override
+	{
+		return A * S->get(i) + B;
+	}
+	SignalType type() const override
+	{
+		return SignalType::LinearMap;
+	}
+
+	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalLinearMap, A, B, S);
+};
+
+class SignalMultiply : public Signal
+{
+	SignalHdl S1;
+	SignalHdl S2;
+
+public:
+	SignalMultiply(SignalHdl &&s1 = SignalHdl(), SignalHdl &&s2 = SignalHdl()) : S1(std::move(s1)), S2(std::move(s2)) {}
+	~SignalMultiply() = default;
+
+	// DELETE_CP_CTOR(SignalMultiply);
+	DEFAULT_MV_CTOR(SignalMultiply);
+
+	float get(index_t i) const override
+	{
+		return S1->get(i) * S2->get(i);
+	}
+	SignalType type() const override
+	{
+		return SignalType::Multiply;
+	}
+
+	NLOHMANN_DEFINE_TYPE_INTRUSIVE(SignalMultiply, S1, S2);
+};
 
 //
 
@@ -322,9 +456,27 @@ inline void from_json(const json &j, SignalHdl &o)
 	case SignalType::Chirp:
 		o = make_signal<SignalChirp>(j);
 		break;
+	case SignalType::ChirpLog:
+		o = make_signal<SignalChirpLog>(j);
+		break;
+
 	case SignalType::Delay:
 		o = make_signal<SignalDelay>(j);
 		break;
+	case SignalType::Absolute:
+		o = make_signal<SignalAbsolute>(j);
+		break;
+	case SignalType::Clamp:
+		o = make_signal<SignalClamp>(j);
+		break;
+	case SignalType::LinearMap:
+		o = make_signal<SignalLinearMap>(j);
+		break;
+
+	case SignalType::Multiply:
+		o = make_signal<SignalMultiply>(j);
+		break;
+
 	default:
 		throw std::invalid_argument("Unknown generator type!");
 	}
@@ -355,9 +507,27 @@ inline void to_json(json &j, const SignalHdl &o)
 	case SignalType::Chirp:
 		j = *static_cast<SignalChirp *>(o.ptr.get());
 		break;
+	case SignalType::ChirpLog:
+		j = *static_cast<SignalChirpLog *>(o.ptr.get());
+		break;
+
 	case SignalType::Delay:
 		j = *static_cast<SignalDelay *>(o.ptr.get());
 		break;
+	case SignalType::Absolute:
+		j = *static_cast<SignalAbsolute *>(o.ptr.get());
+		break;
+	case SignalType::Clamp:
+		j = *static_cast<SignalClamp *>(o.ptr.get());
+		break;
+	case SignalType::LinearMap:
+		j = *static_cast<SignalLinearMap *>(o.ptr.get());
+		break;
+
+	case SignalType::Multiply:
+		j = *static_cast<SignalMultiply *>(o.ptr.get());
+		break;
+
 	default:
 		throw std::invalid_argument("Unknown generator type!");
 	}

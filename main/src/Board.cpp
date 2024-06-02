@@ -95,6 +95,10 @@ namespace Board
 						ret[in] |= BIT(dig_out[b]);
 			return ret;
 		}();
+
+		// I/O conversion
+		constexpr int32_t halfrangein = MCP3204::ref / 2;
+		constexpr int32_t halfrangeout = MCP4922::ref / 2;
 	}
 
 	//================================//
@@ -115,56 +119,55 @@ namespace Board
 		return steering[static_cast<uint8_t>(r)];
 	}
 
-	template <typename num_t, int32_t mul = 1>
-	static num_t adc_to_value(Input in, MCP3204::out_t val)
+	static inline constexpr int32_t adc_offset(MCP3204::out_t val)
 	{
-		// Divider settings:       Min: 1V=>1V, Med: 10V=>1V, Max: 100V=>1V
-		// Gains settings: R=1Ohm; Min: 1mA=>1V, Med: 10mA=>1V, Max: 100mA=>1V
-		constexpr num_t volt_divs[4] = {0, 1, 10, 100};		// ratios of dividers | min range => min attn
-		constexpr num_t curr_gains[4] = {5, 1000, 100, 10}; // gains of instr.amp | min range => max gain
+		return static_cast<int32_t>(val) - halfrangein;
+	}
 
-		// According to docs, Dout = 4096 * Uin/Uref. Assuming Uref=4096mV, Uin=Dout.
-		// Important to note, values are !stretched! and shifted!. 2048 = 0V, 0 = -4096mV, 4096 = 4096mV
+	static inline constexpr MCP4922::in_t dac_offset(int32_t val)
+	{
+		return val + halfrangeout;
+	}
 
-		constexpr int32_t offset = MCP3204::ref / 2;
+	template <typename num_t, int32_t mul = 1>
+	static num_t bin_to_phy(Input in, int32_t sum, int32_t cnt)
+	{
+		constexpr num_t ratio = u_ref * mul / halfrangein;
 
-		constexpr num_t ratio = u_ref * mul / offset;
+		if (in == Input::None || in == Input::Inv) [[unlikely]]
+			return 0;
 
-		int32_t bipolar = val - offset;
-
+		size_t inidx = static_cast<size_t>(in) - 1;
+		size_t rngidx = static_cast<size_t>(an_in_range[inidx]);
 		switch (in)
 		{
 		case Input::In1:
-			return bipolar * ratio * volt_divs[static_cast<size_t>(an_in_range[0])];
 		case Input::In2:
-			return bipolar * ratio * volt_divs[static_cast<size_t>(an_in_range[1])];
 		case Input::In3:
-			return bipolar * ratio * volt_divs[static_cast<size_t>(an_in_range[2])];
+			return sum * ratio * volt_divs[rngidx] / cnt;
 		case Input::In4:
-			return bipolar * ratio / curr_gains[static_cast<size_t>(an_in_range[3])] / ccvs_transresistance;
+			return sum * ratio / curr_gains[rngidx] / cnt * ItoU_input;
 		default:
 			return 0;
 		}
 	}
 
-	static MCP4922::in_t value_to_dac(Output out, float val)
+	static MCP4922::in_t phy_to_dac(Output out, float val)
 	{
-		constexpr float maxabs = u_ref / 2 / 2 * 10; // bipolar and halved, out= -1V -- 1V, *10
-		constexpr int32_t offset = MCP4922::ref / 2;
-		constexpr float ratio = offset / maxabs;
+		constexpr float ratio = halfrangeout / out_ref;
 
 		if (out == Output::None || out == Output::Inv) [[unlikely]]
 			return 0;
 
 		if (out == Output::Out2)
-			val /= vccs_transconductance;
+			val *= UtoI_output;
 
-		if (val >= maxabs) [[unlikely]]
+		if (val >= out_ref) [[unlikely]]
 			return MCP4922::max;
-		if (val <= -maxabs) [[unlikely]]
+		if (val <= -out_ref) [[unlikely]]
 			return MCP4922::min;
 
-		return static_cast<int32_t>(std::round(val * ratio)) + offset;
+		return dac_offset(std::round(val * ratio));
 	}
 
 	//----------------//
@@ -213,7 +216,7 @@ namespace Board
 		return ESP_OK;
 	}
 
-	static esp_err_t analog_input_read(Input in, MCP3204::out_t &out)
+	static MCP3204::out_t analog_input_read(Input in, MCP3204::out_t &out)
 	{
 		if (in == Input::None || in == Input::Inv) [[unlikely]]
 			return ESP_ERR_INVALID_ARG;
@@ -344,7 +347,7 @@ namespace Board
 	{
 		BaseType_t high_task_awoken = pdFALSE;
 
-		if (wait_for_sync)
+		if (edata->alarm_value == time_sync)
 #if SYNC_USE_NOTIF_NOT_SEM
 			vTaskNotifyGiveIndexedFromISR(execute_task, notif_idx, &high_task_awoken);
 #else
@@ -362,7 +365,7 @@ namespace Board
 	{                                                                                   \
 		if (wait_for_sync)                                                              \
 			while (ulTaskNotifyTakeIndexed(notif_idx, pdTRUE, portMAX_DELAY) != pdTRUE) \
-				printf(",");                                                            \
+				;                                                                       \
 	} while (0)
 
 #define CLEAR_SYNC ulTaskNotifyTakeIndexed(notif_idx, pdTRUE, 0)
@@ -374,7 +377,7 @@ namespace Board
 	{                                                                       \
 		if (wait_for_sync)                                                  \
 			while (xSemaphoreTake(sync_semaphore, portMAX_DELAY) != pdTRUE) \
-				printf(",");                                                \
+				;                                                           \
 	} while (0)
 
 #define CLEAR_SYNC xSemaphoreTake(sync_semaphore, 0)
@@ -387,7 +390,7 @@ namespace Board
 		return time_now;
 	}
 
-	static void execute(void *arg)
+	static void interpreter_task(void *arg)
 	{
 		__attribute__((unused)) esp_err_t ret; // used in on_false macros
 
@@ -398,7 +401,7 @@ namespace Board
 		while (true)
 		{
 			ESP_LOGI(TAG, "Waiting for task...");
-			while (!Communicator::check_if_running())
+			while (!Communicator::is_running())
 				vTaskDelay(1);
 
 			ESP_LOGI(TAG, "Dispatched...");
@@ -412,16 +415,16 @@ namespace Board
 				label_fail, TAG, "Failed to port_cleanup!");
 
 			// prepare software
+			ESP_GOTO_ON_FALSE(
+				program.isValid(),
+				ESP_ERR_INVALID_STATE, label_fail, TAG, "Program is invalid!");
+
 			program.reset();
 
 			// letsgooo
 			time_now = 0;
-			time_sync = 0;
+			time_sync = -1;
 			wait_for_sync = false;
-
-			ESP_GOTO_ON_ERROR(
-				gptimer_stop(sync_timer),
-				label_fail, TAG, "Failed to gptimer_stop!");
 
 			ESP_GOTO_ON_ERROR(
 				gptimer_set_raw_count(sync_timer, time_now),
@@ -434,6 +437,8 @@ namespace Board
 			ESP_GOTO_ON_ERROR(
 				gptimer_start(sync_timer),
 				label_fail, TAG, "Failed to gptimer_start!");
+
+			time_sync = 0;
 
 			while (true)
 			{
@@ -448,27 +453,42 @@ namespace Board
 				out = static_cast<Output>(stmt->port);
 
 				// ESP_LOGD(TAG, "OPCode: %" PRId32 ", argu: %" PRIu32 ", argf: %f, port: %" PRIu8, int32_t(stmt->opc), stmt->arg.u, stmt->arg.f, stmt->port);
-
 				// ESP_LOGD(TAG, "Now: %" PRIu64 ", Wait: %" PRIu64, time_now, time_sync);
 
 				switch (stmt->opc)
 				{
 				case OPCode::DELAY:
 					time_sync += stmt->arg.u;
+					wait_for_sync = true;
+					CLEAR_SYNC;
 					ESP_GOTO_ON_ERROR(
 						gptimer_set_alarm_action(sync_timer, &sync_alarm_cfg),
 						label_fail, TAG, "Failed to gptimer_set_alarm_action in OPCode::DELAY!");
-
-					wait_for_sync = (time_sync > get_now()); // and clear sync
-					goto label_nosync;
-					break;
+					continue;
 
 				case OPCode::GETTM:
-					wait_for_sync = (time_sync > get_now());
-					if (!wait_for_sync)
-						time_sync = time_now; // and clear sync
-					goto label_nosync;
-					break;
+					time_sync = std::max(time_sync, get_now());
+					wait_for_sync = true;
+					CLEAR_SYNC;
+					ESP_GOTO_ON_ERROR(
+						gptimer_set_alarm_action(sync_timer, &sync_alarm_cfg),
+						label_fail, TAG, "Failed to gptimer_set_alarm_action in OPCode::GETTM!");
+					continue;
+
+				case OPCode::RSTTM:
+					WAIT_FOR_SYNC;
+					time_sync = -1;
+					wait_for_sync = false;
+					time_now = 0;
+					CLEAR_SYNC;
+					ESP_GOTO_ON_ERROR(
+						gptimer_set_alarm_action(sync_timer, &sync_alarm_cfg),
+						label_fail, TAG, "Failed to gptimer_set_alarm_action in OPCode::RSTTM!");
+					time_sync = 0;
+					ESP_GOTO_ON_ERROR(
+						gptimer_set_raw_count(sync_timer, time_now),
+						label_fail, TAG, "Failed to gptimer_set_raw_count in OPCode::RSTTM!");
+					continue;
 
 				case OPCode::DIRD:
 				{
@@ -503,40 +523,55 @@ namespace Board
 				case OPCode::AIRDF:
 				{
 					WAIT_FOR_SYNC;
+					int32_t sum = 0;
 					MCP3204::out_t rd;
-					ESP_GOTO_ON_ERROR(
-						analog_input_read(in, rd),
-						label_fail, TAG, "Failed to analog_input_read in OPCode::AIRDF!");
-					float val = adc_to_value<float>(in, rd);
+					for (size_t r = stmt->arg.u; r; --r)
+					{
+						ESP_GOTO_ON_ERROR(
+							analog_input_read(in, rd),
+							label_fail, TAG, "Failed to analog_input_read in OPCode::AIRDF!");
+						sum += adc_offset(rd);
+					}
+					float val = bin_to_phy<float>(in, sum, stmt->arg.u);
 					comm_ok = Communicator::write_data(get_now(), val);
 					break;
 				}
 				case OPCode::AIRDM:
 				{
 					WAIT_FOR_SYNC;
+					int32_t sum = 0;
 					MCP3204::out_t rd;
-					ESP_GOTO_ON_ERROR(
-						analog_input_read(in, rd),
-						label_fail, TAG, "Failed to analog_input_read in OPCode::AIRDM!");
-					int32_t val = adc_to_value<int32_t, 1'000>(in, rd);
+					for (size_t r = stmt->arg.u; r; --r)
+					{
+						ESP_GOTO_ON_ERROR(
+							analog_input_read(in, rd),
+							label_fail, TAG, "Failed to analog_input_read in OPCode::AIRDF!");
+						sum += adc_offset(rd);
+					}
+					int32_t val = bin_to_phy<int32_t, 1'000>(in, sum, stmt->arg.u);
 					comm_ok = Communicator::write_data(get_now(), val);
 					break;
 				}
 				case OPCode::AIRDU:
 				{
 					WAIT_FOR_SYNC;
+					int32_t sum = 0;
 					MCP3204::out_t rd;
-					ESP_GOTO_ON_ERROR(
-						analog_input_read(in, rd),
-						label_fail, TAG, "Failed to analog_input_read in OPCode::AIRDU!");
-					int32_t val = adc_to_value<int32_t, 1'000'000>(in, rd);
+					for (size_t r = stmt->arg.u; r; --r)
+					{
+						ESP_GOTO_ON_ERROR(
+							analog_input_read(in, rd),
+							label_fail, TAG, "Failed to analog_input_read in OPCode::AIRDF!");
+						sum += adc_offset(rd);
+					}
+					int32_t val = bin_to_phy<int32_t, 1'000'000>(in, sum, stmt->arg.u);
 					comm_ok = Communicator::write_data(get_now(), val);
 					break;
 				}
 
 				case OPCode::AOVAL:
 				{
-					MCP4922::in_t outval = value_to_dac(out, stmt->arg.f);
+					MCP4922::in_t outval = phy_to_dac(out, stmt->arg.f);
 					WAIT_FOR_SYNC;
 					ESP_GOTO_ON_ERROR(
 						analog_output_write(out, outval),
@@ -545,7 +580,7 @@ namespace Board
 				}
 				case OPCode::AOGEN:
 				{
-					MCP4922::in_t outval = value_to_dac(out, (stmt->arg.u < generators.size()) ? generators[stmt->arg.u].get(time_sync) : 0);
+					MCP4922::in_t outval = phy_to_dac(out, (stmt->arg.u < generators.size()) ? generators[stmt->arg.u].get(time_sync) : 0);
 					WAIT_FOR_SYNC;
 					ESP_GOTO_ON_ERROR(
 						analog_output_write(out, outval),
@@ -577,32 +612,32 @@ namespace Board
 						false, ESP_FAIL,
 						label_fail, TAG, "Failed in OPCode::NOP!");
 					break;
+				case OPCode::INV:
+					ESP_GOTO_ON_FALSE(
+						false, ESP_FAIL,
+						label_fail, TAG, "Failed in OPCode::INV!");
+					break;
 				}
 
 				wait_for_sync = false;
-
-			label_nosync:
-
-				if (!wait_for_sync)
-					CLEAR_SYNC;
-
-				// ESP_LOGV(TAG, "End of command");
 
 				ESP_GOTO_ON_FALSE(
 					comm_ok,
 					ESP_ERR_NO_MEM, label_fail, TAG, "Communicator fail - no buffer space!");
 
-				ESP_GOTO_ON_FALSE(
-					!Communicator::check_if_should_exit(),
-					ESP_FAIL, label_fail, TAG, "Communicator requests to exit!");
+				if (Communicator::should_exit()) [[unlikely]]
+				{
+					ESP_LOGW(TAG, "Communicator requests to exit!");
+					goto label_fail;
+				}
 			}
 
 			WAIT_FOR_SYNC;
 
 		label_fail:
-			port_cleanup();
-
 			gptimer_stop(sync_timer);
+
+			port_cleanup();
 
 			ESP_LOGI(TAG, "Execution took %" PRIu64 "us", get_now());
 			ESP_LOGI(TAG, "Exiting...");
@@ -711,7 +746,7 @@ namespace Board
 
 		// SPAWN EXE TASK
 		ESP_RETURN_ON_FALSE(
-			xTaskCreatePinnedToCore(execute, "BoardTask", BOARD_MEM, nullptr, BOARD_PRT, &execute_task, CPU1),
+			xTaskCreatePinnedToCore(interpreter_task, "BoardTask", BOARD_MEM, nullptr, BOARD_PRT, &execute_task, CPU1),
 			ESP_ERR_NO_MEM, TAG, "Error in xTaskCreatePinnedToCore!");
 
 		ESP_LOGI(TAG, "Done!");
@@ -803,24 +838,6 @@ namespace Board
 
 	esp_err_t test()
 	{
-		uint8_t val = 1;
-		while (val)
-		{
-			expander_a.set_pins(val);
-			val <<= 1;
-			vTaskDelay(pdMS_TO_TICKS(1000));
-		}
-		expander_a.set_pins(val);
-
-		val = 1;
-		while (val)
-		{
-			expander_b.set_pins(val);
-			val <<= 1;
-			vTaskDelay(pdMS_TO_TICKS(1000));
-		}
-		expander_b.set_pins(val);
-
 		return ESP_OK;
 	}
 }

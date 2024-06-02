@@ -21,11 +21,8 @@ private:
 	index_t current_step;
 
 public:
-	Generator() = default;
-	~Generator() = default;
-
-	Generator(Generator &&) = default;
-	Generator &operator=(Generator &&) = default;
+	DEFAULT_CTOR(Generator);
+	DEFAULT_MV_CTOR(Generator);
 
 	void add(float a, SignalHdl &&s)
 	{

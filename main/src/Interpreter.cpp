@@ -9,7 +9,7 @@
 
 using namespace std::string_literals;
 
-static const char *TAG = "Interpreter";
+// static const char *TAG = "Interpreter";
 
 #define PARSE_ERR(reason)                                                \
 	do                                                                   \
@@ -70,10 +70,6 @@ namespace Interpreter
 #include "InterpreterLUT.h"
 
 	// Scope
-
-	Scope::Scope() = default;
-	Scope::~Scope() = default;
-
 	InstrPtr Scope::getInstr() const
 	{
 		if (finished()) [[unlikely]] // never
@@ -212,7 +208,7 @@ namespace Interpreter
 
 	bool Program::parse(const std::string &str, std::vector<std::string> &err)
 	{
-		bool prgValid = true;
+		prgValid = true;
 
 		std::stack<Scope *, std::vector<Scope *>> scopes; // underlying storage type
 		scopes.push(&scope);							  // main
@@ -239,18 +235,10 @@ namespace Interpreter
 			std::string stmtstr = str.substr(beg, end - beg);
 			beg = end + 1;
 
-			// ESP_LOGD(TAG, "Cmd: `%s`", stmtstr.c_str());
-			//  if (stmtstr.empty()) // no command
-			//  	continue;
-
 			std::vector<std::string> args = str_split_on_whitespace(stmtstr); // split and strip WSs
 
 			if (args.empty()) // no command
 				continue;
-
-			// for (const auto& w : args)
-			// 	cout << '`' << w << '\'' << '\t';
-			// cout << endl;
 
 			std::string cmd = std::move(args[0]);
 			args.erase(args.begin());
@@ -265,13 +253,13 @@ namespace Interpreter
 				Loop &l = scopes.top()->appendLoop(iters);
 				scopes.push(&l.getScope());
 			}
-			else if (cmd == "ENDLOOP")
+			else if (cmd == "END")
 			{
 				if (args.size() != 0)
-					PARSE_ERR_SNTX("ENDLOOP <no args>");
+					PARSE_ERR_SNTX("END <no args>");
 
 				if (scopes.size() == 1)
-					PARSE_ERR("ENDLOOP: no previous LOOP to end!");
+					PARSE_ERR("END: no Scope to end!");
 
 				scopes.pop();
 			}
@@ -286,17 +274,23 @@ namespace Interpreter
 					{
 						cs.opc = lut.opc;
 
-						if ((args.size() != lut.argcnt) || (lut.parser && !lut.parser(args, cs)))
+						if (!lut.parser)
+						{
+							PARSE_ERR("command has no arg parser!");
+							break;
+						}
+
+						if ((args.size() != lut.argcnt) || !lut.parser(args, cs))
 							PARSE_ERR_SNTX(lut.namestr + ' ' + lut.argstr);
 
 						break;
 					}
 				}
 
-				if (cs.opc == OPCode::NOP)
-					PARSE_ERR("unknown command!");
-
-				scopes.top()->appendInstr(cs);
+				if (cs.opc == OPCode::NOP || cs.opc == OPCode::INV)
+					PARSE_ERR("invalid command!");
+				else
+					scopes.top()->appendInstr(cs);
 			}
 		}
 
@@ -304,8 +298,13 @@ namespace Interpreter
 
 		line = -1;
 		for (size_t i = 0; i < scopes.size(); ++i)
-			PARSE_ERR("LOOP missing matching ENDLOOP!");
+			PARSE_ERR("Scope has not been terminated (missing END)!");
 
+		return prgValid;
+	}
+
+	bool Program::isValid() const
+	{
 		return prgValid;
 	}
 };

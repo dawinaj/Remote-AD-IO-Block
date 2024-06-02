@@ -33,19 +33,19 @@ static const char *TAG = "WebServer";
 
 //
 
-bool str_is_ascii(const std::string &s)
-{
-	return std::all_of(s.begin(), s.end(),
-					   [](unsigned char ch)
-					   { return ch <= 127; });
-}
+// bool str_is_ascii(const std::string &s)
+// {
+// 	return std::all_of(s.begin(), s.end(),
+// 					   [](unsigned char ch)
+// 					   { return ch <= 127; });
+// }
 
-void str_to_lower(std::string &s)
-{
-	std::transform(s.begin(), s.end(), s.begin(),
-				   [](unsigned char c)
-				   { return std::tolower(c); });
-}
+// void str_to_lower(std::string &s)
+// {
+// 	std::transform(s.begin(), s.end(), s.begin(),
+// 				   [](unsigned char c)
+// 				   { return std::tolower(c); });
+// }
 
 //
 
@@ -155,7 +155,8 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 					 "\t- \"generators\" is an array of amplitudes and waveforms\n"
 					 "List of existing commands with syntax and description: ${data.prg.cmds}.\n"
 					 "Exemplary generator of a sine signal: ${data.prg.gnrtr}.\n"
-					 "List of existing waveforms with syntax: ${data.prg.wvfrms}.\n";
+					 "List of existing waveforms with syntax: ${data.prg.wvfrms}.\n"
+					 "Input ranges, max values and resolution: ${data.ranges}.\n";
 
 	doc["data"]["cmpl"]["date"] = __DATE__;
 	doc["data"]["cmpl"]["time"] = __TIME__;
@@ -165,8 +166,8 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 	doc["data"]["url"]["sett"] = "/settings";
 	doc["data"]["url"]["meas"] = "/io";
 
+	// Commands
 	doc["data"]["prg"]["cmds"] = ordered_json::array();
-
 	for (const auto &lut : CS_LUT)
 	{
 		auto cmd = ordered_json::object();
@@ -175,6 +176,7 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 		doc["data"]["prg"]["cmds"].push_back(cmd);
 	}
 
+	// Generators
 	Generator gen;
 	gen.add(1.0f, make_signal<SignalSine>(1000));
 	doc["data"]["prg"]["gnrtr"] = static_cast<json>(gen);
@@ -187,8 +189,49 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Triangle);
 	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Chirp);
 
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Delay);
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Absolute);
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Clamp);
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::LinearMap);
+	doc["data"]["prg"]["wvfrms"].push_back(SignalType::Multiply);
+
+	// Ranges
+	doc["data"]["ranges"] = ordered_json::object();
+	doc["data"]["ranges"]["Uin"] = ordered_json::object();
+	doc["data"]["ranges"]["Iin"] = ordered_json::object();
+
+	doc["data"]["ranges"]["Uin"]["range"] = ordered_json::object();
+	doc["data"]["ranges"]["Uin"]["range"]["MIN"] = Board::u_ref * Board::volt_divs[1];
+	doc["data"]["ranges"]["Uin"]["range"]["MED"] = Board::u_ref * Board::volt_divs[2];
+	doc["data"]["ranges"]["Uin"]["range"]["MAX"] = Board::u_ref * Board::volt_divs[3];
+
+	doc["data"]["ranges"]["Iin"]["range"] = ordered_json::object();
+	doc["data"]["ranges"]["Iin"]["range"]["MIN"] = Board::u_ref / Board::curr_gains[1] * Board::ItoU_input;
+	doc["data"]["ranges"]["Iin"]["range"]["MED"] = Board::u_ref / Board::curr_gains[2] * Board::ItoU_input;
+	doc["data"]["ranges"]["Iin"]["range"]["MAX"] = Board::u_ref / Board::curr_gains[3] * Board::ItoU_input;
+
+	doc["data"]["ranges"]["Uin"]["resolution"] = ordered_json::object();
+	doc["data"]["ranges"]["Uin"]["resolution"]["MIN"] = Board::u_ref * Board::volt_divs[1] * 2 / MCP3204::ref;
+	doc["data"]["ranges"]["Uin"]["resolution"]["MED"] = Board::u_ref * Board::volt_divs[2] * 2 / MCP3204::ref;
+	doc["data"]["ranges"]["Uin"]["resolution"]["MAX"] = Board::u_ref * Board::volt_divs[3] * 2 / MCP3204::ref;
+
+	doc["data"]["ranges"]["Iin"]["resolution"] = ordered_json::object();
+	doc["data"]["ranges"]["Iin"]["resolution"]["MIN"] = Board::u_ref / Board::curr_gains[1] * Board::ItoU_input * 2 / MCP3204::ref;
+	doc["data"]["ranges"]["Iin"]["resolution"]["MED"] = Board::u_ref / Board::curr_gains[2] * Board::ItoU_input * 2 / MCP3204::ref;
+	doc["data"]["ranges"]["Iin"]["resolution"]["MAX"] = Board::u_ref / Board::curr_gains[3] * Board::ItoU_input * 2 / MCP3204::ref;
+
+	doc["data"]["ranges"]["Uout"] = ordered_json::object();
+	doc["data"]["ranges"]["Iout"] = ordered_json::object();
+
+	doc["data"]["ranges"]["Uout"]["range"] = Board::out_ref;
+	doc["data"]["ranges"]["Iout"]["range"] = Board::out_ref / Board::UtoI_output;
+	doc["data"]["ranges"]["Uout"]["resolution"] = Board::out_ref * 2 / MCP3204::ref;
+	doc["data"]["ranges"]["Iout"]["resolution"] = Board::out_ref / Board::UtoI_output * 2 / MCP3204::ref;
+
+	// Godsend
 	std::string out = doc.dump();
 
+	ESP_LOGI(TAG, "Handler done.");
 	return httpd_resp_send(req, out.c_str(), out.length());
 }
 
@@ -197,7 +240,7 @@ static esp_err_t welcome_handler(httpd_req_t *req)
 static esp_err_t settings_handler(httpd_req_t *req)
 {
 	// Make sure that the producer is *not* running
-	if (Communicator::check_if_running())
+	if (Communicator::is_running())
 		return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Device is busy");
 
 	ESP_LOGV(TAG, "Req len: %" PRIu16, req->content_len);
@@ -210,53 +253,57 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	SocketReader reader(req);
 	ordered_json q = ordered_json::parse(reader.begin(), reader.end(), nullptr, false, true);
 
-	if (reader.err) // failed to read
+	if (reader.err) // failed to read from socket
 	{
-		ESP_LOGD(TAG, "Reader error");
+		ESP_LOGW(TAG, "Reader error");
 		if (reader.err == HTTPD_SOCK_ERR_TIMEOUT)
 			httpd_resp_send_408(req);
 		return reader.err;
 	}
 
-	if (!q.is_discarded())
+	if (!q.is_discarded()) // if JSON is valid
 	{
-		//*/
-		if (q.contains("generators") && q.at("generators").is_array())
+		if (q.contains("generators"))
 		{
 			ESP_LOGD(TAG, "Generators exists, trying...");
-			// parse generators
-			size_t count = q.at("generators").size();
-			generators.reserve(count);
-
-			for (auto &[key, val] : q.at("generators").items())
+			if (q.at("generators").is_array())
 			{
-				try
+				size_t count = q.at("generators").size();
+				generators.reserve(count);
+
+				for (auto &[key, val] : q.at("generators").items())
 				{
-					Generator g = val.get<Generator>();
-					generators.push_back(std::move(g));
+					try
+					{
+						Generator g = val.get<Generator>();
+						generators.push_back(std::move(g));
+					}
+					catch (ordered_json::exception &e)
+					{
+						generators.emplace_back();
+						errors.push_back("Generator #"s + key + " failed to parse: " + e.what());
+						ESP_LOGW(TAG, "Generator failed to parse: %s", e.what());
+					}
+					val = nullptr;
 				}
-				catch (ordered_json::exception &e)
-				{
-					generators.emplace_back();
-					errors.push_back("Generator #"s + key + " failed to parse: " + e.what());
-					ESP_LOGE(TAG, "%s", e.what());
-				}
-				val = nullptr;
 			}
+			else
+				errors.push_back("\"generators\" is not an array!");
 			q.erase("generators");
 		}
-		//*/
-		//*/
-		if (q.contains("task") && q.at("task").is_string())
+		if (q.contains("task"))
 		{
 			ESP_LOGD(TAG, "Task exists, trying...");
-			// parse program
-			const std::string &prg = q.at("task").get_ref<const std::string &>();
-			program.parse(prg, errors);
-			ESP_LOGD(TAG, "Task has %u statements", program.size());
+			if (q.at("task").is_string())
+			{
+				const std::string &prg = q.at("task").get_ref<const std::string &>();
+				program.parse(prg, errors);
+				ESP_LOGD(TAG, "Task has %u statements", program.size());
+			}
+			else
+				errors.push_back("\"task\" is not a string!");
 			q.erase("task");
 		}
-		//*/
 	}
 	else
 		errors.push_back("JSON is invalid!");
@@ -288,6 +335,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 	std::string out = res.dump();
 	res.clear();
 
+	ESP_LOGD(TAG, "Handler done.");
 	return httpd_resp_send(req, out.c_str(), out.length());
 }
 
@@ -296,7 +344,7 @@ static esp_err_t settings_handler(httpd_req_t *req)
 static esp_err_t io_handler(httpd_req_t *req)
 {
 	// Make sure that the producer is *not* running
-	if (Communicator::check_if_running())
+	if (Communicator::is_running())
 		return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Device is busy");
 
 	auto qr = parse_query(req);
@@ -324,7 +372,7 @@ static esp_err_t io_handler(httpd_req_t *req)
 	ESP_LOGI(TAG, "Notifying producer...");
 	Communicator::start_running();
 
-	while (Communicator::check_if_running())
+	while (Communicator::is_running() || Communicator::has_data())
 	{
 		auto rsvd = Communicator::get_read();
 
@@ -336,30 +384,33 @@ static esp_err_t io_handler(httpd_req_t *req)
 			total_sent += rsvd.size();
 
 			Communicator::commit_read();
-
-			if (ret != ESP_OK)
-				Communicator::ask_for_exit();
+			vTaskDelay(pdMS_TO_TICKS(1));
 		}
 		else // if no new data
 		{
 			if (!httpd_req_check_live(req)) // check if dead, ask to stop
 			{
 				ESP_LOGW(TAG, "Client disconnected...");
-				Communicator::ask_for_exit();
+				ret = HTTPD_SOCK_ERR_TIMEOUT;
 			}
+			vTaskDelay(pdMS_TO_TICKS(10));
 		}
 
-		if (rsvd.size() != 0)
-			taskYIELD();
-		else
-			vTaskDelay(pdMS_TO_TICKS(10));
+		if (ret != ESP_OK)
+			break;
 	}
+
+	Communicator::ask_to_exit();
+
+	while (Communicator::is_running())
+		vTaskDelay(pdMS_TO_TICKS(10));
 
 	ESP_LOGW(TAG, "Total sent: %zu bytes...", total_sent);
 
 	if (ret != ESP_OK)
 		return ret;
 
+	ESP_LOGI(TAG, "Handler done.");
 	return httpd_resp_send_chunk(req, nullptr, 0);
 }
 
@@ -407,6 +458,8 @@ esp_err_t start_webserver()
 	config.max_open_sockets = 1; // 3 for internal, 1 for external
 	config.max_uri_handlers = 4;
 
+	config.lru_purge_enable = true;
+
 	config.keep_alive_enable = true;
 	config.keep_alive_idle = 5;
 	config.keep_alive_interval = 5;
@@ -449,17 +502,24 @@ esp_err_t stop_webserver()
 	return ESP_OK;
 }
 
+//
+
 bool httpd_req_check_live(httpd_req_t *req)
 {
+	static char buf;
+	static TickType_t last = 0;
+
 	if (req == nullptr)
 		return false;
 
+	TickType_t now = xTaskGetTickCount();
+	if (now - last < pdMS_TO_TICKS(1000))
+		return true;
+
+	last = now;
+
 	int sockfd = httpd_req_to_sockfd(req);
 
-	char buf;
-
-	int ret = httpd_socket_recv(server, sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
-	return ret == HTTPD_SOCK_ERR_TIMEOUT;
-
+	return httpd_socket_recv(server, sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT) == HTTPD_SOCK_ERR_TIMEOUT;
 	//	return recv(sockfd, &buf, 1, MSG_PEEK | MSG_DONTWAIT) != 0;
 }

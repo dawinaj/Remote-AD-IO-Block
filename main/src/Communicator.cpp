@@ -98,9 +98,14 @@ namespace Communicator
 
 	//
 
-	bool check_if_running()
+	bool is_running()
 	{
 		return producer_running.load(std::memory_order::relaxed);
+	}
+
+	bool has_data()
+	{
+		return !bipbuf.empty();
 	}
 
 	void start_running()
@@ -109,13 +114,13 @@ namespace Communicator
 		producer_running.notify_one();
 	}
 
-	void ask_for_exit()
+	void ask_to_exit()
 	{
 		please_exit.store(true, std::memory_order::relaxed);
 		Board::give_sem_emergency();
 	}
 
-	bool check_if_should_exit()
+	bool should_exit()
 	{
 		return please_exit.load(std::memory_order::relaxed);
 	}

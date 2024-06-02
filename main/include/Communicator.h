@@ -33,10 +33,13 @@ namespace Communicator
 	etl::span<char> get_read();
 	void commit_read();
 
-	bool check_if_running();
+	bool is_running();
+	bool has_data();
+
 	void start_running();
-	void ask_for_exit();
-	bool check_if_should_exit();
+	void ask_to_exit();
+
+	bool should_exit();
 	void confirm_exit();
 
 };
