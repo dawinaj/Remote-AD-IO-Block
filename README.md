@@ -1,1 +1,3 @@
-# Blok_IO_AC
+# Remote Analog/Digital Input-Output Block
+
+This is a device built for Masters Degree.
